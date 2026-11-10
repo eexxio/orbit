@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit AI code review configuration. Docs: https://docs.coderabbit.ai/getting-started/configure-coderabbit
+language: en-US
+tone_instructions: "Be concise and specific. Prioritize correctness, concurrency, and security over style nits."
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+  path_filters:
+    - "!**/*.xcassets/**"
+    - "!**/Package.resolved"
+    - "!**/xcuserdata/**"
+  path_instructions:
+    - path: "orbit/**/*.swift"
+      instructions: |
+        Follow AGENTS.md. The target uses SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor and the Observation
+        framework (@Observable / @Bindable, not ObservableObject). Flag data races, work that blocks the
+        main actor, retain cycles in Task/closure captures, and continuations that can be resumed twice or never.
+    - path: "orbit/Hermes/**"
+      instructions: |
+        Network code talking to a Hermes Agent server. Parse server JSON defensively through the JSON enum,
+        never log tokens, passwords or Cloudflare Access secrets, and send the CF-Access headers on every
+        request including the WebSocket upgrade. Keep the endpoint list at the top of HermesClient.swift current.
+    - path: "orbit/Storage/**"
+      instructions: |
+        Secrets must only go to the Keychain; cached conversations must stay excluded from backups.
+    - path: "orbit.xcodeproj/**"
+      instructions: |
+        Xcode 27 JSON project with a synchronized `orbit/` folder. Flag unnecessary edits, especially changes
+        to DEVELOPMENT_TEAM, bundle identifier, or deployment targets.
+  tools:
+    swiftlint:
+      enabled: true
+    actionlint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "CONTRIBUTING.md"

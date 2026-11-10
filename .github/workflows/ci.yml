@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (iOS Simulator)
+    # The project needs Xcode 27.2+. Update the runner image or Xcode version below as GitHub ships them.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project orbit.xcodeproj \
+            -scheme orbit \
+            -destination 'generic/platform=iOS Simulator' \
+            build CODE_SIGNING_ALLOWED=NO \
+            | tee build.log

@@ -1,0 +1,46 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Settings
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: ios
+    attributes:
+      label: iOS / iPadOS version and device
+      placeholder: iOS 27.2, iPhone 17 Pro
+    validations:
+      required: true
+  - type: input
+    id: hermes
+    attributes:
+      label: Hermes version
+      description: Shown in Settings once connected.
+  - type: dropdown
+    id: auth
+    attributes:
+      label: How does your dashboard sign in?
+      options:
+        - Open (no sign-in)
+        - Username & password
+        - Behind Cloudflare Access
+        - Not sure
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs
+      description: Remove any addresses, tokens, or passwords first.

@@ -3,213 +3,19 @@ import SwiftUI
 
 struct ChatInterfaceView: View {
 
-    @State private var messages: [ChatMessage] = [
-        ChatMessage(
-            text: "Can you explain SwiftUI?",
-            isUser: true
-        ),
-        ChatMessage(
-            text: """
-            Absolutely! **SwiftUI** is Apple's modern framework for building apps across iOS, macOS, watchOS, and more.
+    /// The Hermes session this chat shows; nil starts a new one on the first message.
+    let sessionKey: String?
 
-            ### How it works
+    init(sessionKey: String? = nil) {
+        self.sessionKey = sessionKey
+    }
 
-            SwiftUI uses a declarative syntax. You describe what your interface should look like, and the framework handles rendering it.
-
-            For example:
-
-            ```swift
-            Text("Hello, world!")
-                .font(.title)
-                .foregroundStyle(.blue)
-            ```
-
-            **Some key concepts:**
-
-            - `View` – Building blocks of your interface.
-            - `@State` – Manages local view state.
-            - `VStack` – Arranges views vertically.
-            - `NavigationStack` – Handles navigation.
-
-            It's a great way to build modern Apple applications!
-            """,
-            isUser: false
-        ),
-        ChatMessage(
-            text: "What is the difference between VStack and HStack?",
-            isUser: true
-        ),
-        ChatMessage(
-            text: """
-            Great question! Both `VStack` and `HStack` are layout containers in SwiftUI.
-
-            ### VStack
-            A `VStack` arranges views vertically, from top to bottom.
-
-            ```swift
-            VStack {
-                Text("First")
-                Text("Second")
-                Text("Third")
-            }
-            ```
-
-            ### HStack
-            An `HStack` arranges views horizontally, from left to right.
-
-            ```swift
-            HStack {
-                Text("First")
-                Text("Second")
-                Text("Third")
-            }
-            ```
-
-            **In short:** Use `VStack` for vertical layouts and `HStack` for horizontal layouts.
-            """,
-            isUser: false
-        ),
-        ChatMessage(
-            text: "Can I combine them to create more complex layouts?",
-            isUser: true
-        ),
-        ChatMessage(
-            text: """
-            Absolutely! You can nest stacks inside one another to create almost any layout.
-
-            For example:
-
-            ```swift
-            VStack(alignment: .leading, spacing: 16) {
-                Text("My Profile")
-                    .font(.title)
-
-                HStack {
-                    Image(systemName: "person.circle.fill")
-                        .font(.largeTitle)
-
-                    VStack(alignment: .leading) {
-                        Text("John Appleseed")
-                            .font(.headline)
-
-                        Text("iOS Developer")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding()
-            ```
-
-            Here, the outer `VStack` arranges content vertically, while the inner `HStack` places the profile image and user information side by side.
-
-            Nesting stacks is one of the most useful techniques in SwiftUI!
-            """,
-            isUser: false
-        ),
-        ChatMessage(
-            text: "How does @State work?",
-            isUser: true
-        ),
-        ChatMessage(
-            text: """
-            `@State` is a property wrapper that allows a SwiftUI view to store and manage its own data.
-
-            When the state changes, SwiftUI automatically updates the parts of the interface that depend on it.
-
-            ### Example
-
-            ```swift
-            struct CounterView: View {
-                @State private var count = 0
-
-                var body: some View {
-                    VStack(spacing: 20) {
-                        Text("Count: \\(count)")
-                            .font(.largeTitle)
-
-                        Button("Increase") {
-                            count += 1
-                        }
-                    }
-                    .padding()
-                }
-            }
-            ```
-
-            Every time you press the button, the count increases and the displayed text updates automatically.
-
-            **Remember:** Use `@State` for data owned by a view.
-            """,
-            isUser: false
-        ),
-        ChatMessage(
-            text: "What about animations? Can SwiftUI animate these changes?",
-            isUser: true
-        ),
-        ChatMessage(
-            text: """
-            Yes! SwiftUI makes animations very easy.
-
-            You can use `withAnimation` to animate state changes.
-
-            ```swift
-            struct AnimationView: View {
-                @State private var isExpanded = false
-
-                var body: some View {
-                    VStack {
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(.blue)
-                            .frame(
-                                width: isExpanded ? 250 : 120,
-                                height: 120
-                            )
-
-                        Button("Toggle Animation") {
-                            withAnimation(.spring(duration: 0.5)) {
-                                isExpanded.toggle()
-                            }
-                        }
-                    }
-                }
-            }
-            ```
-
-            SwiftUI automatically animates the size change using a spring animation.
-
-            You can also animate opacity, rotation, position, scale, and much more!
-            """,
-            isUser: false
-        ),
-        ChatMessage(
-            text: "That sounds great! What should I learn next?",
-            isUser: true
-        ),
-        ChatMessage(
-            text: """
-            You're making great progress! Here is a learning path I recommend:
-
-            ### Your SwiftUI learning roadmap
-
-            1. **Layouts** – Learn `VStack`, `HStack`, `ZStack`, and `LazyVGrid`.
-            2. **State management** – Understand `@State`, `@Binding`, and `@Observable`.
-            3. **Navigation** – Explore `NavigationStack` and navigation destinations.
-            4. **Lists** – Build dynamic lists using `List` and `ForEach`.
-            5. **Animations** – Practice transitions and implicit animations.
-            6. **Networking** – Fetch data from APIs using `URLSession` and async/await.
-            7. **Persistence** – Learn SwiftData for storing application data.
-
-            ### My recommendation
-
-            Start by building a simple to-do list application. It will help you practice layouts, state management, lists, and user interactions.
-
-            Once you're comfortable with that, try building a weather application!
-
-            Happy coding! 🚀
-            """,
-            isUser: false
-        )
-    ]
+    @State private var messages: [ChatMessage] = []
+    @State private var hermesChat: HermesConversation?
+    @State private var streamingID: UUID?
+    @State private var loadedHistory = false
+    /// True while an existing chat's history loads and nothing is cached to show.
+    @State private var isLoadingHistory = false
 
 
     @State private var draft = ""
@@ -220,7 +26,9 @@ struct ChatInterfaceView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if messages.isEmpty {
+                if isLoadingHistory && messages.isEmpty {
+                    loadingState
+                } else if messages.isEmpty {
                     emptyState
                 } else {
                     conversation
@@ -231,6 +39,25 @@ struct ChatInterfaceView: View {
                 composer
             }
         }
+        .task { await loadHistory() }
+        .onDisappear {
+            hermesChat?.close()
+            hermesChat = nil
+        }
+    }
+
+    // MARK: - Loading State
+
+    private var loadingState: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+                .controlSize(.large)
+
+            Text("Loading conversation…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Empty State
@@ -275,13 +102,14 @@ struct ChatInterfaceView: View {
     // MARK: - Conversation
 
     private var conversation: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
                 ForEach(messages) { message in
                     messageRow(message)
                 }
 
-                if isGenerating {
+                if isGenerating && streamingID == nil {
                     HStack(spacing: 10) {
                         ProgressView()
 
@@ -291,12 +119,30 @@ struct ChatInterfaceView: View {
                     }
                     .padding(.leading, 4)
                 }
+
+                Color.clear
+                    .frame(height: 1)
+                    .id(Self.bottomID)
             }
             .padding(.horizontal, 18)
             .padding(.top, 8)
             .padding(.bottom, 16)
         }
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
         .scrollDismissesKeyboard(.interactively)
+        .onAppear { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+        // A loaded or refreshed history, a sent message, and each streamed word.
+        .onChange(of: scrollToken) {
+            proxy.scrollTo(Self.bottomID, anchor: .bottom)
+        }
+        }
+    }
+
+    private static let bottomID = "conversation-bottom"
+
+    /// Changes whenever the newest content changes, so the view follows it to the bottom.
+    private var scrollToken: String {
+        "\(messages.count)|\(messages.last?.text.count ?? 0)|\(isGenerating)"
     }
 
     // MARK: - Message Row
@@ -408,7 +254,91 @@ struct ChatInterfaceView: View {
         draft = ""
         composerIsFocused = false
 
-        // Connect your AI service here and append its response to messages.
+        Task { await submit(text) }
+    }
+
+    // MARK: - Hermes
+
+    private func loadHistory() async {
+        guard !loadedHistory else { return }
+        loadedHistory = true
+        guard let sessionKey else { return }
+        let client = HermesClient.shared
+
+        // The cached copy shows at once; the server's copy replaces it when it arrives.
+        if let cached = client.cachedMessages(for: sessionKey), !cached.isEmpty {
+            messages = cached.map(ChatMessage.init)
+        } else {
+            isLoadingHistory = true
+        }
+        defer { isLoadingHistory = false }
+
+        do {
+            let fresh = try await client.messages(for: sessionKey)
+            // Don't clobber a turn the user started while this loaded.
+            guard !isGenerating else { return }
+            if fresh.map(\.text) != messages.map(\.text) {
+                messages = fresh.map(ChatMessage.init)
+            }
+        } catch {
+            // Offline with a cached copy: keep showing it.
+            if messages.isEmpty {
+                messages.append(ChatMessage(text: "⚠️ \(error.localizedDescription)", isUser: false))
+            }
+        }
+    }
+
+    private func submit(_ text: String) async {
+        let chat = hermesChat ?? makeConversation()
+        isGenerating = true
+        do {
+            try await chat.send(text)
+        } catch {
+            finishTurn(error: error.localizedDescription)
+        }
+    }
+
+    private func makeConversation() -> HermesConversation {
+        let chat = HermesConversation(storedKey: sessionKey)
+        chat.onDelta = { delta in
+            if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
+                messages[index].text += delta
+            } else {
+                let message = ChatMessage(text: delta, isUser: false)
+                streamingID = message.id
+                messages.append(message)
+            }
+        }
+        chat.onComplete = { finalText in
+            if let finalText, !finalText.isEmpty {
+                if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
+                    messages[index].text = finalText
+                } else {
+                    messages.append(ChatMessage(text: finalText, isUser: false))
+                }
+            }
+            finishTurn(error: nil)
+        }
+        chat.onError = { message in
+            finishTurn(error: message)
+        }
+        hermesChat = chat
+        return chat
+    }
+
+    private func finishTurn(error: String?) {
+        if let error {
+            messages.append(ChatMessage(text: "⚠️ \(error)", isUser: false))
+        }
+        streamingID = nil
+        isGenerating = false
+        if let key = hermesChat?.storedKey ?? sessionKey {
+            let transcript = messages
+                .filter { !($0.text.hasPrefix("⚠️ ") && !$0.isUser) }
+                .map { HermesMessage(role: $0.isUser ? "user" : "assistant", text: $0.text) }
+            HermesClient.shared.cacheMessages(transcript, for: key)
+        }
+        Task { await HermesClient.shared.refreshSessions() }
     }
 }
 
@@ -416,8 +346,17 @@ struct ChatInterfaceView: View {
 
 private struct ChatMessage: Identifiable {
     let id = UUID()
-    let text: String
+    var text: String
     let isUser: Bool
+
+    init(text: String, isUser: Bool) {
+        self.text = text
+        self.isUser = isUser
+    }
+
+    init(_ message: HermesMessage) {
+        self.init(text: message.text, isUser: message.role == "user")
+    }
 }
 
 #Preview {

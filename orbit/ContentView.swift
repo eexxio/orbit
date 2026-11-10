@@ -6,24 +6,9 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var showSettings = false
 
-    // Sample chat data
-    private let chats = [
-        "hello",
-        "SwiftUI Development",
-        "Learning Python",
-        "Project Planning",
-        "Travel Ideas",
-        "App Design",
-        "Artificial Intelligence",
-        "Business Ideas",
-        "Workout Routine",
-        "Recipe Suggestions",
-        "iOS Development",
-        "Study Notes",
-        "Technology News",
-        "Creative Writing",
-        "Personal Assistant"
-    ]
+    @State private var startNewChat = false
+
+    private var client: HermesClient { HermesClient.shared }
 
     var body: some View {
 
@@ -31,14 +16,14 @@ struct ContentView: View {
 
             List {
 
-                ForEach(chats.filter {
+                ForEach(client.sessions.filter {
                     searchText.isEmpty ||
-                    $0.localizedCaseInsensitiveContains(searchText)
-                }, id: \.self) { chat in
+                    $0.title.localizedCaseInsensitiveContains(searchText)
+                }) { chat in
 
-                    NavigationLink(chat) {
+                    NavigationLink(chat.title) {
 
-                        ChatInterfaceView()
+                        ChatInterfaceView(sessionKey: chat.id)
                             .navigationBarTitleDisplayMode(.inline)
                     }
                 }
@@ -66,25 +51,29 @@ struct ContentView: View {
                 ToolbarItem(placement: .bottomBar) {
 
                     Button {
-                        // Write action
+                        startNewChat = true
                     } label: {
                         Image(systemName: "square.and.pencil")
                     }
                 }
             }
+            .navigationDestination(isPresented: $startNewChat) {
+                ChatInterfaceView()
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+            .task {
+                if client.isConfigured, client.state == .disconnected {
+                    await client.connect()
+                }
+            }
+            .onAppear {
+                if client.state == .connected {
+                    Task { await client.refreshSessions() }
+                }
+            }
             .sheet(isPresented: $showSettings) {
 
-                NavigationStack {
-
-                    List {
-                        Text("Account")
-                        Text("Notifications")
-                        Text("Appearance")
-                        Text("Privacy")
-                    }
-                    .navigationTitle("Settings")
-                    .navigationBarTitleDisplayMode(.inline)
-                }
+                SettingsView()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }

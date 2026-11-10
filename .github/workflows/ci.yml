@@ -15,8 +15,12 @@ jobs:
     # The Xcode 27 JSON project format needs Xcode 27.2+, which only the (preview) xcode-27 image has today.
     # Move to a GA macOS 27 image once GitHub ships one.
     runs-on: xcode-27
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Select Xcode 27.2
         run: sudo xcode-select -s /Applications/Xcode_27.2.app && xcodebuild -version

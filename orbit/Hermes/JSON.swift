@@ -33,7 +33,7 @@ enum JSON: Codable, Equatable, Sendable {
     var text: String? {
         switch self {
         case .string(let s): return s
-        case .number(let n): return n == n.rounded() ? String(Int(n)) : String(n)
+        case .number(let n): return Int(exactly: n).map(String.init) ?? String(n)
         default: return nil
         }
     }
@@ -44,7 +44,7 @@ enum JSON: Codable, Equatable, Sendable {
         default: return nil
         }
     }
-    var int: Int? { double.map { Int($0) } }
+    var int: Int? { double.flatMap { Int(exactly: $0) } }
     var flag: Bool? { if case .bool(let b) = self { return b }; return nil }
     var list: [JSON]? { if case .array(let a) = self { return a }; return nil }
 

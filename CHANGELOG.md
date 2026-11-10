@@ -12,3 +12,4 @@ All notable changes to this project are documented here. The format follows
 - Streaming chat over the Hermes gateway WebSocket, with Markdown-rendered replies.
 - On-device cache of the most recent conversations for instant and offline reading.
 - Redesigned composer that stays pinned above the keyboard.
+- Pixel-art app icon (a planet with an orbiting satellite), with dark and tinted versions.

@@ -18,8 +18,7 @@ struct ChatInterfaceView: View {
     @State private var loadedHistory = false
     /// True while an existing chat's history loads and nothing is cached to show.
     @State private var isLoadingHistory = false
-    /// Whether the conversation is scrolled to (or near) its newest message.
-    @State private var isNearBottom = true
+    @State private var scrollPosition = ScrollPosition()
 
 
     @State private var draft = ""
@@ -137,17 +136,18 @@ struct ChatInterfaceView: View {
         // conversation moves up with it instead of sliding behind the keyboard.
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .scrollDismissesKeyboard(.interactively)
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.contentOffset.y + geometry.containerSize.height
-                >= geometry.contentSize.height + geometry.contentInsets.bottom - 80
-        } action: { _, nearBottom in
-            isNearBottom = nearBottom
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            guard isNearBottom else { return }
-            withAnimation(.easeOut(duration: 0.25)) {
-                proxy.scrollTo(Self.bottomID, anchor: .bottom)
-            }
+        .scrollPosition($scrollPosition)
+        // The keyboard (or a taller composer) covers the bottom of the conversation by
+        // growing its insets, which a size-change anchor never sees. Shift the content up
+        // by the same amount so the messages that were just above the composer stay there.
+        .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { old, new in
+            let covered = (new.contentInsets.bottom - new.containerSize.height)
+                - (old.contentInsets.bottom - old.containerSize.height)
+            guard covered > 1 else { return }
+            let maxOffset = new.contentSize.height + new.contentInsets.bottom - new.containerSize.height
+            let target = min(new.contentOffset.y + covered, maxOffset)
+            guard target > new.contentOffset.y + 1 else { return }
+            scrollPosition.scrollTo(y: target)
         }
         .onAppear { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
         // A loaded or refreshed history, a sent message, and each streamed word.

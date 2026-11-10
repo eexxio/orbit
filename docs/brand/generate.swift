@@ -60,7 +60,8 @@ struct Canvas {
         return c
     }
 
-    func save(_ path: String, scale: Int) {
+    /// `opaque` drops the alpha channel, which App Store validation requires for the app icon.
+    func save(_ path: String, scale: Int, opaque: Bool = false) {
         let W = w * scale, H = h * scale
         var bytes = [UInt8](repeating: 0, count: W * H * 4)
         for y in 0..<H { for x in 0..<W {
@@ -70,7 +71,7 @@ struct Canvas {
         } }
         let ctx = CGContext(data: &bytes, width: W, height: H, bitsPerComponent: 8, bytesPerRow: W * 4,
                             space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                            bitmapInfo: (opaque ? CGImageAlphaInfo.noneSkipLast : .premultipliedLast).rawValue)!
         let url = URL(fileURLWithPath: path)
         try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)!
@@ -338,9 +339,15 @@ lockup(markLight, wordBlack, stacked: true).save("\(root)/lockup/lockup-stacked-
 // App icon: whole-number enlargements of the 32px grid only, so every art pixel stays square.
 var appIcon = onDark; appIcon.sky = void; appIcon.stars = true
 let icon = mark(appIcon)
-for size in [32, 64, 128, 256, 512, 1024] { icon.save("\(root)/app-icon/icon-\(size).png", scale: size / N) }
+for size in [32, 64, 128, 256, 512, 1024] { icon.save("\(root)/app-icon/icon-\(size).png", scale: size / N, opaque: true) }
 mark(onDark).save("\(root)/app-icon/icon-dark-1024.png", scale: 32)   // iOS dark appearance: no background
-icon.save("\(root)/app-icon/icon-tinted-1024.png", scale: 32)         // iOS tinted: grayscale, opaque
+icon.save("\(root)/app-icon/icon-tinted-1024.png", scale: 32, opaque: true) // iOS tinted: grayscale, opaque
+
+// The app's own AppIcon set, kept in sync with the kit (single-size iOS icon with dark and tinted looks).
+let appIconSet = "orbit/Resources/Assets.xcassets/AppIcon.appiconset"
+icon.save("\(appIconSet)/AppIcon.png", scale: 32, opaque: true)
+mark(onDark).save("\(appIconSet)/AppIcon-Dark.png", scale: 32)
+icon.save("\(appIconSet)/AppIcon-Tinted.png", scale: 32, opaque: true)
 // Light variant: white sky with dark stars, for an alternate icon or light-themed placements.
 var lightIcon = onLight; lightIcon.sky = white; lightIcon.stars = true
 lightIcon.starColors = (slate, fog, graphite, fog)

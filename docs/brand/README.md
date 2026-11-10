@@ -108,7 +108,7 @@ the font file on its own or using the name "Monocraft" for a modified version of
 - `icon-32.png` through `icon-512.png` are whole-number enlargements for docs, websites and favicons.
   Don't make 180 px or 167 px versions by resampling; they come out blurry.
 
-The icon isn't in the Xcode asset catalog yet.
+`generate.swift` also writes these into the app's `AppIcon` set (`orbit/Resources/Assets.xcassets/AppIcon.appiconset`), so re-running the script keeps the app icon in sync with the kit.
 
 ## Social
 

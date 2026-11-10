@@ -17,3 +17,4 @@ All notable changes to this project are documented here. The format follows
 - Redesigned Settings with the orbit logo, a connection status pill, and an About section.
 - Edit the agent's SOUL.md (its personality) from Settings.
 - Choose a theme (System, Light, Dark) and an accent color for buttons, links and your chat bubbles.
+- Each streamed reply shows its generation speed in tokens per second (estimated with ~ when the server doesn't report usage).

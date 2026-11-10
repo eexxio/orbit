@@ -15,6 +15,8 @@ struct ChatInterfaceView: View {
     @State private var messages: [ChatMessage] = []
     @State private var hermesChat: HermesConversation?
     @State private var streamingID: UUID?
+    /// When the current reply's first word arrived, for its tokens-per-second rate.
+    @State private var streamStart: Date?
     @State private var loadedHistory = false
     /// True while an existing chat's history loads and nothing is cached to show.
     @State private var isLoadingHistory = false
@@ -195,6 +197,13 @@ struct ChatInterfaceView: View {
                     } label: {
                         Image(systemName: "doc.on.doc")
                     }
+
+                    if let rate = message.rate {
+                        Label(rate.label, systemImage: "gauge.with.dots.needle.67percent")
+                            .font(.caption.monospacedDigit())
+                            .contentTransition(.numericText())
+                            .accessibilityLabel(rate.accessibilityLabel)
+                    }
                 }
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -343,19 +352,28 @@ struct ChatInterfaceView: View {
         chat.onDelta = { delta in
             if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
                 messages[index].text += delta
+                // A live, estimated rate while it streams; the host's count replaces it at the end.
+                if let streamStart {
+                    messages[index].rate = TokenRate(tokens: nil, text: messages[index].text, since: streamStart)
+                }
             } else {
                 let message = ChatMessage(text: delta, isUser: false)
                 streamingID = message.id
+                streamStart = .now
                 messages.append(message)
             }
         }
-        chat.onComplete = { finalText in
+        chat.onComplete = { finalText, outputTokens in
             if let finalText, !finalText.isEmpty {
                 if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
                     messages[index].text = finalText
                 } else {
                     messages.append(ChatMessage(text: finalText, isUser: false))
                 }
+            }
+            // Only streamed replies get a rate: without deltas there's no start of generation to time from.
+            if let id = streamingID, let streamStart, let index = messages.firstIndex(where: { $0.id == id }) {
+                messages[index].rate = TokenRate(tokens: outputTokens, text: messages[index].text, since: streamStart)
             }
             finishTurn(error: nil)
         }
@@ -371,6 +389,7 @@ struct ChatInterfaceView: View {
             messages.append(ChatMessage(text: "⚠️ \(error)", isUser: false))
         }
         streamingID = nil
+        streamStart = nil
         isGenerating = false
         if let key = hermesChat?.storedKey ?? sessionKey {
             let transcript = messages
@@ -388,6 +407,8 @@ private struct ChatMessage: Identifiable {
     let id = UUID()
     var text: String
     let isUser: Bool
+    /// Generation speed, for replies streamed in this session (not kept in the cache).
+    var rate: TokenRate?
 
     init(text: String, isUser: Bool) {
         self.text = text

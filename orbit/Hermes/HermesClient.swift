@@ -182,7 +182,14 @@ final class HermesClient {
         var rows = json["messages"].list ?? []
         // `order=latest` pages newest first; show oldest first.
         if let first = rows.first?["id"].double, let last = rows.last?["id"].double, first > last { rows.reverse() }
-        let messages = Self.transcript(from: rows)
+        var messages = Self.transcript(from: rows)
+        // The server doesn't know how fast replies streamed; keep the rates this device measured.
+        if let cached = cache.messages(for: key) {
+            let rates = Dictionary(cached.compactMap { m in m.rate.map { (m.text, $0) } }) { _, last in last }
+            for index in messages.indices where messages[index].role == "assistant" {
+                messages[index].rate = rates[messages[index].text]
+            }
+        }
         cache.store(messages, for: key, lastActive: sessions.first { $0.id == key }?.lastActive)
         return messages
     }

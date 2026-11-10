@@ -12,6 +12,7 @@ struct ChatInterfaceView: View {
     }
 
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
+    @AppStorage(AppearanceKey.showToolCalls) private var showToolCalls = true
     @State private var messages: [ChatMessage] = []
     @State private var hermesChat: HermesConversation?
     /// The reply text and thinking blocks still being streamed into, if any.
@@ -112,7 +113,8 @@ struct ChatInterfaceView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
                 let copies = replyCopies
-                ForEach(messages) { message in
+                // Hidden tool calls stay in `messages`, so the cache and the toggle keep them.
+                ForEach(showToolCalls ? messages : messages.filter { $0.tool == nil }) { message in
                     messageRow(message, copyText: copies[message.id])
                 }
 

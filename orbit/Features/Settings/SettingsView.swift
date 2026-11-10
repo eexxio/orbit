@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
     @AppStorage(AppearanceKey.theme) private var theme = Theme.system
+    @AppStorage(AppearanceKey.showToolCalls) private var showToolCalls = true
 
     var body: some View {
 
@@ -23,6 +24,7 @@ struct SettingsView: View {
                 connectionSection
                 agentSection
                 appearanceSection
+                chatSection
                 aboutSection
             }
             .navigationTitle("Settings")
@@ -122,6 +124,21 @@ struct SettingsView: View {
             Text(client.state == .connected
                  ? "Edit SOUL.md, the persona Hermes uses for this profile."
                  : "Connect to edit the agent's SOUL.md.")
+        }
+    }
+
+    private var chatSection: some View {
+
+        Section {
+            Toggle(isOn: $showToolCalls) {
+                SettingsField(icon: "wrench.and.screwdriver") {
+                    Text("Show tool calls")
+                }
+            }
+        } header: {
+            Text("Chat")
+        } footer: {
+            Text("Show the commands, file reads and other tools the agent runs while it works.")
         }
     }
 

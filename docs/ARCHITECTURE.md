@@ -37,7 +37,7 @@ publishes events to the view through closures (`onDelta`, `onComplete`, `onError
 ## Storage
 
 - `ConversationCache` keeps the session list and up to 25 recent transcripts as JSON files in
-  `Application Support/<hash of address+username>/`, excluded from iCloud backups. The client prefetches
+  `Application Support/ConversationCache/<hash of address+username>/`, excluded from iCloud backups. The client prefetches
   stale conversations after every session refresh.
 - `Keychain` is a minimal generic-password wrapper, with service `orbit.hermes` and accessibility
   `AfterFirstUnlock`.

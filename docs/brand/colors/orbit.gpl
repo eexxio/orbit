@@ -1,0 +1,12 @@
+GIMP Palette
+Name: orbit
+Columns: 8
+#
+  6   6   6	Void
+ 43  43  43	Graphite
+ 61  61  61	Iron
+ 92  92  92	Slate
+128 128 128	Ash
+181 181 181	Fog
+235 235 235	Mist
+255 255 255	White

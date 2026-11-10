@@ -118,8 +118,10 @@ final class HermesConversation {
         if frame["method"].text == "event" { apply(frame["params"]); return }
         // A server→client request (approvals, questions): this client doesn't advertise
         // `server_requests`, so the host shouldn't send any; answer empty to be safe.
-        if let id = frame["id"].text, frame["method"].text != nil, frame["id"].int == nil {
-            let reply: JSON = .object(["jsonrpc": .string("2.0"), "id": .string(id), "result": .object([:])])
+        // JSON-RPC tells requests from responses by `method`; echo the request's id unchanged.
+        if frame["method"].text != nil {
+            guard frame["id"] != .null else { return }
+            let reply: JSON = .object(["jsonrpc": .string("2.0"), "id": frame["id"], "result": .object([:])])
             socket?.send(.string(String(decoding: reply.encoded(), as: UTF8.self))) { _ in }
             return
         }

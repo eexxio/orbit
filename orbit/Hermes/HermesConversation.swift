@@ -13,7 +13,8 @@ final class HermesConversation {
     private var pending: [Int: CheckedContinuation<JSON, Error>] = [:]
 
     var onDelta: ((String) -> Void)?
-    var onComplete: ((String?) -> Void)?
+    /// The final text, and the output-token count when the host reports usage.
+    var onComplete: ((String?, Int?) -> Void)?
     var onError: ((String) -> Void)?
     var onTitle: ((String) -> Void)?
     /// Reply text sealed before a tool call; `alreadyStreamed` means it came as deltas too.
@@ -161,7 +162,7 @@ final class HermesConversation {
             if payload["status"].text == "error", payload["partial"].flag != true {
                 onError?(payload["text"].text ?? payload["error"].text ?? "The turn failed.")
             } else {
-                onComplete?(payload["text"].text)
+                onComplete?(payload["text"].text, Self.outputTokens(payload))
             }
         case "error":
             if let message = payload["message"].text, !message.isEmpty { onError?(message) }
@@ -172,6 +173,17 @@ final class HermesConversation {
         default:
             break
         }
+    }
+
+    /// Output tokens for the turn, if the host says. Hermes releases and providers name
+    /// this differently (OpenAI- vs Anthropic-style usage), so try the common spellings.
+    private static func outputTokens(_ payload: JSON) -> Int? {
+        for usage in [payload["usage"], payload["info"]["usage"], payload] {
+            for key in ["output_tokens", "completion_tokens", "outputTokens", "completionTokens"] {
+                if let n = usage[key].int, n > 0 { return n }
+            }
+        }
+        return nil
     }
 
     private func failPending(_ error: Error) {

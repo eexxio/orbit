@@ -18,11 +18,12 @@ struct ChatInterfaceView: View {
     /// The reply text and thinking blocks still being streamed into, if any.
     @State private var streamingID: UUID?
     @State private var reasoningID: UUID?
+    /// When the current reply's first word arrived, for its tokens-per-second rate.
+    @State private var streamStart: Date?
     @State private var loadedHistory = false
     /// True while an existing chat's history loads and nothing is cached to show.
     @State private var isLoadingHistory = false
-    /// Whether the conversation is scrolled to (or near) its newest message.
-    @State private var isNearBottom = true
+    @State private var scrollPosition = ScrollPosition()
 
 
     @State private var draft = ""
@@ -142,17 +143,18 @@ struct ChatInterfaceView: View {
         // conversation moves up with it instead of sliding behind the keyboard.
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .scrollDismissesKeyboard(.interactively)
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            geometry.contentOffset.y + geometry.containerSize.height
-                >= geometry.contentSize.height + geometry.contentInsets.bottom - 80
-        } action: { _, nearBottom in
-            isNearBottom = nearBottom
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            guard isNearBottom else { return }
-            withAnimation(.easeOut(duration: 0.25)) {
-                proxy.scrollTo(Self.bottomID, anchor: .bottom)
-            }
+        .scrollPosition($scrollPosition)
+        // The keyboard (or a taller composer) covers the bottom of the conversation by
+        // growing its insets, which a size-change anchor never sees. Shift the content up
+        // by the same amount so the messages that were just above the composer stay there.
+        .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { old, new in
+            let covered = (new.contentInsets.bottom - new.containerSize.height)
+                - (old.contentInsets.bottom - old.containerSize.height)
+            guard covered > 1 else { return }
+            let maxOffset = new.contentSize.height + new.contentInsets.bottom - new.containerSize.height
+            let target = min(new.contentOffset.y + covered, maxOffset)
+            guard target > new.contentOffset.y + 1 else { return }
+            scrollPosition.scrollTo(y: target)
         }
         .onAppear { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
         // A loaded or refreshed history, a sent message, and each streamed word.
@@ -214,14 +216,23 @@ struct ChatInterfaceView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                if let copyText {
+                if copyText != nil || message.rate != nil {
                     HStack(spacing: 20) {
-                        Button {
-                            UIPasteboard.general.string = copyText
-                        } label: {
-                            Image(systemName: "doc.on.doc")
+                        if let copyText {
+                            Button {
+                                UIPasteboard.general.string = copyText
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                            }
+                            .accessibilityLabel("Copy reply")
                         }
-                        .accessibilityLabel("Copy reply")
+
+                        if let rate = message.rate {
+                            Label(rate.label, systemImage: "gauge.with.dots.needle.67percent")
+                                .font(.caption.monospacedDigit())
+                                .contentTransition(.numericText())
+                                .accessibilityLabel(rate.accessibilityLabel)
+                        }
                     }
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -372,9 +383,14 @@ struct ChatInterfaceView: View {
             reasoningID = nil
             if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
                 messages[index].text += delta
+                // A live, estimated rate while it streams; the host's count replaces it at the end.
+                if let streamStart {
+                    messages[index].rate = TokenRate(tokens: nil, text: messages[index].text, since: streamStart)
+                }
             } else {
                 let message = ChatMessage(text: delta, isUser: false)
                 streamingID = message.id
+                streamStart = .now
                 messages.append(message)
             }
         }
@@ -404,7 +420,7 @@ struct ChatInterfaceView: View {
             messages[index].tool?.summary = summary
         }
         // The final text is the last segment only, so it replaces just that one.
-        chat.onComplete = { finalText in
+        chat.onComplete = { finalText, outputTokens in
             if let finalText, !finalText.isEmpty {
                 if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
                     messages[index].text = finalText
@@ -412,6 +428,13 @@ struct ChatInterfaceView: View {
                     // Unless an interim message already sealed this same text.
                     messages.append(ChatMessage(text: finalText, isUser: false))
                 }
+            }
+            // Only streamed replies get a rate: without deltas there's no start of generation to time from.
+            if let id = streamingID, let streamStart, let index = messages.firstIndex(where: { $0.id == id }) {
+                // The host counts the whole turn, so its number only fits a reply with no thinking or tools before it.
+                let turnStart = (messages.lastIndex(where: \.isUser) ?? -1) + 1
+                let soleReply = index == turnStart && index == messages.count - 1
+                messages[index].rate = TokenRate(tokens: soleReply ? outputTokens : nil, text: messages[index].text, since: streamStart)
             }
             finishTurn(error: nil)
         }
@@ -428,6 +451,7 @@ struct ChatInterfaceView: View {
         }
         streamingID = nil
         reasoningID = nil
+        streamStart = nil
         isGenerating = false
         // An interrupted or failed turn leaves no spinner running.
         for index in messages.indices where messages[index].tool?.isDone == false {
@@ -450,6 +474,8 @@ struct ChatInterfaceView: View {
 private struct ChatMessage: Identifiable {
     let id = UUID()
     var item: HermesMessage
+    /// Generation speed, for replies streamed in this session (not kept in the cache).
+    var rate: TokenRate?
 
     init(_ item: HermesMessage) { self.item = item }
 

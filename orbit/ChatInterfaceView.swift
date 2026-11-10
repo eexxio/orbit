@@ -1,5 +1,6 @@
 
 import SwiftUI
+import MarkdownUI
 
 struct ChatInterfaceView: View {
 
@@ -181,8 +182,9 @@ struct ChatInterfaceView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 12) {
-                Text(.init(message.text))
-                    .font(.body)
+                // Full block-level Markdown: headings, lists, code blocks, quotes, tables.
+                Markdown(message.text)
+                    .markdownTheme(.basic)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 

@@ -215,8 +215,12 @@ struct ChatInterfaceView: View {
             Button {
                 sendMessage()
             } label: {
+                // Resizable so the circle fills exactly 30pt; a font-sized symbol
+                // carries extra baseline space below it and sits off-center.
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 30))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 30, height: 30)
             }
             .tint(.primary)
             .disabled(!canSend)

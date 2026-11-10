@@ -4,6 +4,8 @@ import SwiftUI
 enum AppearanceKey {
     static let accent = "hermes.accent"
     static let theme = "hermes.theme"
+    /// Whether chats show the agent's tool calls as rows.
+    static let showToolCalls = "hermes.showToolCalls"
 }
 
 /// The tint for buttons, links and your own chat bubbles. `mono` follows the grayscale brand.

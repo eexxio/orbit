@@ -120,15 +120,15 @@ struct ChatInterfaceView: View {
                     messageRow(message, copyText: copies[message.id])
                 }
 
-                if isGenerating && streamingID == nil && reasoningID == nil {
-                    HStack(spacing: 10) {
-                        ProgressView()
-
+                if showsWaitingIndicator {
+                    // Styled like a live thinking row, so the wait and the thinking read as one thing.
+                    HStack(spacing: 6) {
+                        Image(systemName: "brain")
+                            .symbolEffect(.pulse)
                         Text("Thinking…")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
                     }
-                    .padding(.leading, 4)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 }
 
                 Color.clear
@@ -335,6 +335,12 @@ struct ChatInterfaceView: View {
         composerIsFocused = false
 
         Task { await submit(text) }
+    }
+
+    /// Something is on its way but no row shows it yet. A running tool row has its own spinner.
+    private var showsWaitingIndicator: Bool {
+        guard isGenerating, streamingID == nil, reasoningID == nil else { return false }
+        return !(showToolCalls && messages.last?.tool?.isDone == false)
     }
 
     // MARK: - Hermes

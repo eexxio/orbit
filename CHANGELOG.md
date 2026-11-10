@@ -21,3 +21,4 @@ All notable changes to this project are documented here. The format follows
 - Each streamed reply shows its generation speed in tokens per second (estimated with ~ when the server doesn't report usage).
 - See the agent's thinking as a collapsible block and its tool calls as compact rows, live and in loaded chats.
 - A Settings toggle to show or hide the agent's tool calls in chats.
+- The "Thinking…" indicator shown while the agent works matches the thinking block, and steps aside while a tool call shows its own spinner.

@@ -48,6 +48,7 @@ struct ChatInterfaceView: View {
             }
         }
         .task { await loadHistory() }
+        .task { await focusComposerForNewChat() }
         .onDisappear {
             hermesChat?.close()
             hermesChat = nil
@@ -337,6 +338,16 @@ struct ChatInterfaceView: View {
     }
 
     // MARK: - Hermes
+
+    /// A new chat opens ready to type. The short wait lets the push transition settle,
+    /// since focus set mid-animation is dropped and the keyboard never appears.
+    private func focusComposerForNewChat() async {
+        guard sessionKey == nil, messages.isEmpty else { return }
+        try? await Task.sleep(for: .milliseconds(450))
+        // Recheck: a message sent during the wait already cleared focus on purpose.
+        guard !Task.isCancelled, messages.isEmpty, !isGenerating else { return }
+        composerIsFocused = true
+    }
 
     private func loadHistory() async {
         guard !loadedHistory else { return }

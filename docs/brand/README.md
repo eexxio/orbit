@@ -110,6 +110,9 @@ the font file on its own or using the name "Monocraft" for a modified version of
 
 `generate.swift` also writes these into the app's `AppIcon` set (`orbit/Resources/Assets.xcassets/AppIcon.appiconset`), so re-running the script keeps the app icon in sync with the kit.
 
+It also writes the stacked lockup at 1× into `Lockup.imageset` (light and dark appearances). The
+app shows it in Settings, enlarged by a whole number with `.interpolation(.none)`.
+
 ## Social
 
 - [`social/github-social-preview.png`](social/github-social-preview.png) (1280 × 640): upload it in

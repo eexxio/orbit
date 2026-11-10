@@ -348,6 +348,11 @@ let appIconSet = "orbit/Resources/Assets.xcassets/AppIcon.appiconset"
 icon.save("\(appIconSet)/AppIcon.png", scale: 32, opaque: true)
 mark(onDark).save("\(appIconSet)/AppIcon-Dark.png", scale: 32)
 icon.save("\(appIconSet)/AppIcon-Tinted.png", scale: 32, opaque: true)
+// In-app branding at 1× (one art pixel per point). SwiftUI enlarges it by whole numbers with
+// `.interpolation(.none)`, so it stays sharp at any size without shipping big PNGs.
+let lockupSet = "orbit/Resources/Assets.xcassets/Lockup.imageset"
+lockup(markLight, wordBlack, stacked: true).save("\(lockupSet)/Lockup-Light.png", scale: 1)
+lockup(markDark, wordWhite, stacked: true).save("\(lockupSet)/Lockup-Dark.png", scale: 1)
 // Light variant: white sky with dark stars, for an alternate icon or light-themed placements.
 var lightIcon = onLight; lightIcon.sky = white; lightIcon.stars = true
 lightIcon.starColors = (slate, fog, graphite, fog)

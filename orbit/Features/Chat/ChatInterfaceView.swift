@@ -11,6 +11,7 @@ struct ChatInterfaceView: View {
         self.sessionKey = sessionKey
     }
 
+    @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
     @State private var messages: [ChatMessage] = []
     @State private var hermesChat: HermesConversation?
     @State private var streamingID: UUID?
@@ -174,9 +175,9 @@ struct ChatInterfaceView: View {
                 Text(message.text)
                     .padding(.horizontal, 15)
                     .padding(.vertical, 11)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(accent.onColor)
                     .background(
-                        Color.black,
+                        accent.color,
                         in: RoundedRectangle(cornerRadius: 20)
                     )
             }
@@ -222,7 +223,7 @@ struct ChatInterfaceView: View {
                     .scaledToFit()
                     .frame(width: 30, height: 30)
             }
-            .tint(.primary)
+            .tint(accent.color)
             .disabled(!canSend)
             .animation(.default, value: canSend)
             .accessibilityLabel("Send")

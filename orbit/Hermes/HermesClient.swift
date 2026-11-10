@@ -8,6 +8,8 @@ import Observation
 //   • GET  /api/profiles/active        – `{current}` profile name
 //   • GET  /api/sessions               – session list
 //   • GET  /api/sessions/{key}/messages – transcript
+//   • GET  /api/profiles/{name}/soul   – `{content, exists}`: the profile's SOUL.md
+//   • PUT  /api/profiles/{name}/soul   – `{content}` replaces SOUL.md
 //   • POST /api/auth/ws-ticket         – single-use ticket for the gateway socket
 //   • WS   /api/ws                     – JSON-RPC 2.0 gateway: session.create / session.resume /
 //                                        prompt.submit, streaming `message.delta` events.
@@ -186,6 +188,21 @@ final class HermesClient {
         }
         cache.store(messages, for: key, lastActive: sessions.first { $0.id == key }?.lastActive)
         return messages
+    }
+
+    /// The active profile's SOUL.md (the agent's persona). Empty when the file doesn't exist yet.
+    func soul() async throws -> String {
+        try await ensureSignedIn()
+        return try await getJSON("api/profiles/\(profile)/soul")["content"].text ?? ""
+    }
+
+    func saveSoul(_ content: String) async throws {
+        try await ensureSignedIn()
+        guard let base = baseURL else { throw HermesError.notConfigured }
+        var req = request(base, "api/profiles/\(profile)/soul", method: "PUT",
+                          body: .object(["content": .string(content)]))
+        let (data, response) = try await authorizedRaw(&req)
+        guard (200..<300).contains(response.statusCode) else { throw HermesError.http(response.statusCode, Self.detail(data)) }
     }
 
     /// The conversation as it was last read on this device, for an instant first render.

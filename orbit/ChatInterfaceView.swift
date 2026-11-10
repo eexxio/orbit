@@ -203,29 +203,37 @@ struct ChatInterfaceView: View {
     // MARK: - Composer
 
     private var composer: some View {
-        HStack {
-            TextField("Ask anything", text: $draft)
+        HStack(alignment: .bottom, spacing: 8) {
+            // Grows with its text up to six lines, then scrolls.
+            TextField("Ask anything", text: $draft, axis: .vertical)
                 .focused($composerIsFocused)
-                .padding()
-                .submitLabel(.send)
-                .onSubmit {
-                    sendMessage()
-                }
+                .lineLimit(1...6)
+                .padding(.vertical, 11)
 
             Button {
                 sendMessage()
             } label: {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.title)
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 30))
             }
-            .disabled(
-                draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            )
+            .tint(.primary)
+            .disabled(!canSend)
+            .animation(.default, value: canSend)
+            .accessibilityLabel("Send")
+            .padding(.bottom, 7)
         }
-        .padding(.horizontal)
-        .glassEffect(.regular.interactive(), in: Capsule())
-        .padding()
+        .padding(.leading, 16)
+        .padding(.trailing, 7)
+        .frame(minHeight: 44)
+        .contentShape(.rect)
+        .onTapGesture { composerIsFocused = true }
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+    }
+
+    private var canSend: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     // MARK: - Suggestions

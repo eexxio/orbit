@@ -1,5 +1,21 @@
+# macOS
 .DS_Store
+
+# Xcode
 xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
 DerivedData/
 build/
-*.xcuserstate
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.xcresult
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Local, per-developer overrides
+*.local.xcconfig

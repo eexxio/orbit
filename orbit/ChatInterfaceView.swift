@@ -225,11 +225,19 @@ struct ChatInterfaceView: View {
         .padding(.leading, 16)
         .padding(.trailing, 7)
         .frame(minHeight: 44)
+        // At rest the bar narrows toward the center; focusing it spreads it full width.
+        .frame(maxWidth: composerIsCollapsed ? 240 : .infinity)
         .contentShape(.rect)
         .onTapGesture { composerIsFocused = true }
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
+        .animation(.spring(duration: 0.4, bounce: 0.2), value: composerIsCollapsed)
+    }
+
+    /// Collapsed while unfocused, unless there is a draft that would get squeezed.
+    private var composerIsCollapsed: Bool {
+        !composerIsFocused && draft.isEmpty
     }
 
     private var canSend: Bool {

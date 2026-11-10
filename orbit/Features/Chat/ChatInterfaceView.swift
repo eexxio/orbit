@@ -111,8 +111,9 @@ struct ChatInterfaceView: View {
         ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
+                let copies = replyCopies
                 ForEach(messages) { message in
-                    messageRow(message)
+                    messageRow(message, copyText: copies[message.id])
                 }
 
                 if isGenerating && streamingID == nil && reasoningID == nil {
@@ -166,10 +167,26 @@ struct ChatInterfaceView: View {
         "\(messages.count)|\(messages.last?.text.count ?? 0)|\(isGenerating)"
     }
 
+    /// One copy button per agent reply, under its last text segment, copying all of the reply's
+    /// text. A reply still streaming gets none until it finishes.
+    private var replyCopies: [UUID: String] {
+        var copies: [UUID: String] = [:]
+        var segments: [ChatMessage] = []
+        func close() {
+            if let last = segments.last { copies[last.id] = segments.map(\.text).joined(separator: "\n\n") }
+            segments = []
+        }
+        for message in messages {
+            if message.isUser { close() } else if message.role == "assistant" { segments.append(message) }
+        }
+        if !isGenerating { close() }
+        return copies
+    }
+
     // MARK: - Message Row
 
     @ViewBuilder
-    private func messageRow(_ message: ChatMessage) -> some View {
+    private func messageRow(_ message: ChatMessage, copyText: String?) -> some View {
         if message.role == "reasoning" {
             ReasoningRow(text: message.text, isLive: message.id == reasoningID)
         } else if let tool = message.tool {
@@ -195,15 +212,18 @@ struct ChatInterfaceView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 20) {
-                    Button {
-                        UIPasteboard.general.string = message.text
-                    } label: {
-                        Image(systemName: "doc.on.doc")
+                if let copyText {
+                    HStack(spacing: 20) {
+                        Button {
+                            UIPasteboard.general.string = copyText
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        .accessibilityLabel("Copy reply")
                     }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

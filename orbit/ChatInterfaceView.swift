@@ -16,6 +16,8 @@ struct ChatInterfaceView: View {
     @State private var loadedHistory = false
     /// True while an existing chat's history loads and nothing is cached to show.
     @State private var isLoadingHistory = false
+    /// Whether the conversation is scrolled to (or near) its newest message.
+    @State private var isNearBottom = true
 
 
     @State private var draft = ""
@@ -129,7 +131,22 @@ struct ChatInterfaceView: View {
             .padding(.bottom, 16)
         }
         .defaultScrollAnchor(.bottom, for: .initialOffset)
+        // When the keyboard shrinks the view, keep the bottom edge fixed so the
+        // conversation moves up with it instead of sliding behind the keyboard.
+        .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .scrollDismissesKeyboard(.interactively)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.contentOffset.y + geometry.containerSize.height
+                >= geometry.contentSize.height + geometry.contentInsets.bottom - 80
+        } action: { _, nearBottom in
+            isNearBottom = nearBottom
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            guard isNearBottom else { return }
+            withAnimation(.easeOut(duration: 0.25)) {
+                proxy.scrollTo(Self.bottomID, anchor: .bottom)
+            }
+        }
         .onAppear { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
         // A loaded or refreshed history, a sent message, and each streamed word.
         .onChange(of: scrollToken) {

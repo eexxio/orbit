@@ -12,7 +12,9 @@ import Observation
 //   • PUT  /api/profiles/{name}/soul   – `{content}` replaces SOUL.md
 //   • POST /api/auth/ws-ticket         – single-use ticket for the gateway socket
 //   • WS   /api/ws                     – JSON-RPC 2.0 gateway: session.create / session.resume /
-//                                        prompt.submit, streaming `message.delta` events.
+//                                        prompt.submit, streaming `message.delta` / `message.interim` /
+//                                        `message.complete`, `reasoning.delta` / `reasoning.available`,
+//                                        and `tool.start` / `tool.complete` events.
 
 // MARK: - Client
 
@@ -180,12 +182,7 @@ final class HermesClient {
         var rows = json["messages"].list ?? []
         // `order=latest` pages newest first; show oldest first.
         if let first = rows.first?["id"].double, let last = rows.last?["id"].double, first > last { rows.reverse() }
-        let messages: [HermesMessage] = rows.compactMap { row in
-            guard let role = row["role"].text, role == "user" || role == "assistant" else { return nil }
-            let text = Self.text(of: row["content"])
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            return HermesMessage(role: role, text: text)
-        }
+        let messages = Self.transcript(from: rows)
         cache.store(messages, for: key, lastActive: sessions.first { $0.id == key }?.lastActive)
         return messages
     }
@@ -333,6 +330,28 @@ final class HermesClient {
     static func detail(_ data: Data) -> String? {
         guard let json = JSON.decode(data) else { return nil }
         return json["detail"].text ?? json["error"].text ?? json["message"].text
+    }
+
+    /// Stored rows to transcript items. An assistant row expands to its reasoning, its text and
+    /// its tool calls, in that order; `tool` result rows are dropped, since the call shows already.
+    static func transcript(from rows: [JSON]) -> [HermesMessage] {
+        var items: [HermesMessage] = []
+        func isBlank(_ s: String) -> Bool { s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        for row in rows {
+            let role = row["role"].text ?? ""
+            guard role == "user" || role == "assistant" else { continue }
+            if role == "assistant" {
+                let reasoning = row["reasoning"].text ?? row["reasoning_content"].text ?? ""
+                if !isBlank(reasoning) { items.append(HermesMessage(role: "reasoning", text: reasoning)) }
+            }
+            let text = text(of: row["content"])
+            if !isBlank(text) { items.append(HermesMessage(role: role, text: text)) }
+            for call in row["tool_calls"].list ?? [] {
+                guard let tool = HermesToolCall(stored: call) else { continue }
+                items.append(HermesMessage(role: "tool", text: "", tool: tool))
+            }
+        }
+        return items
     }
 
     static func text(of content: JSON) -> String {

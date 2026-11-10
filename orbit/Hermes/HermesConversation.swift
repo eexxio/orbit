@@ -16,6 +16,12 @@ final class HermesConversation {
     var onComplete: ((String?) -> Void)?
     var onError: ((String) -> Void)?
     var onTitle: ((String) -> Void)?
+    /// Reply text sealed before a tool call; `alreadyStreamed` means it came as deltas too.
+    var onInterim: ((_ text: String, _ alreadyStreamed: Bool) -> Void)?
+    /// Thinking text; `replace` swaps the current block's text instead of appending to it.
+    var onReasoning: ((_ text: String, _ replace: Bool) -> Void)?
+    var onToolStart: ((HermesToolCall) -> Void)?
+    var onToolComplete: ((_ id: String, _ summary: String?) -> Void)?
 
     private let client = HermesClient.shared
 
@@ -139,6 +145,17 @@ final class HermesConversation {
         switch event["type"].text ?? "" {
         case "message.delta":
             if let text = payload["text"].text, !text.isEmpty { onDelta?(text) }
+        case "message.interim":
+            if let text = payload["text"].text, !text.isEmpty { onInterim?(text, payload["already_streamed"].flag == true) }
+        // `thinking.delta` is spinner and wait-notice text, not the model's reasoning: left out.
+        case "reasoning.delta", "reasoning.available":
+            if let text = payload["text"].text, !text.isEmpty { onReasoning?(text, event["type"].text == "reasoning.available") }
+        case "tool.start":
+            guard let id = payload["tool_id"].text, let name = payload["name"].text else { return }
+            onToolStart?(HermesToolCall(id: id, name: name, context: payload["context"].text ?? "",
+                                        summary: nil, isDone: false))
+        case "tool.complete":
+            if let id = payload["tool_id"].text { onToolComplete?(id, payload["summary"].text) }
         case "message.complete":
             if event["admission_id"].text != nil, event["execution_generation"] == .null { return }
             if payload["status"].text == "error", payload["partial"].flag != true {

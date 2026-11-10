@@ -16,3 +16,4 @@ All notable changes to this project are documented here. The format follows
 - Redesigned Settings with the orbit logo, a connection status pill, and an About section.
 - Edit the agent's SOUL.md (its personality) from Settings.
 - Choose a theme (System, Light, Dark) and an accent color for buttons, links and your chat bubbles.
+- See the agent's thinking as a collapsible block and its tool calls as compact rows, live and in loaded chats.

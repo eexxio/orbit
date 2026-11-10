@@ -14,7 +14,9 @@ struct ChatInterfaceView: View {
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
     @State private var messages: [ChatMessage] = []
     @State private var hermesChat: HermesConversation?
+    /// The reply text and thinking blocks still being streamed into, if any.
     @State private var streamingID: UUID?
+    @State private var reasoningID: UUID?
     @State private var loadedHistory = false
     /// True while an existing chat's history loads and nothing is cached to show.
     @State private var isLoadingHistory = false
@@ -113,7 +115,7 @@ struct ChatInterfaceView: View {
                     messageRow(message)
                 }
 
-                if isGenerating && streamingID == nil {
+                if isGenerating && streamingID == nil && reasoningID == nil {
                     HStack(spacing: 10) {
                         ProgressView()
 
@@ -168,7 +170,11 @@ struct ChatInterfaceView: View {
 
     @ViewBuilder
     private func messageRow(_ message: ChatMessage) -> some View {
-        if message.isUser {
+        if message.role == "reasoning" {
+            ReasoningRow(text: message.text, isLive: message.id == reasoningID)
+        } else if let tool = message.tool {
+            ToolCallRow(tool: tool)
+        } else if message.isUser {
             HStack {
                 Spacer(minLength: 48)
 
@@ -317,7 +323,7 @@ struct ChatInterfaceView: View {
             let fresh = try await client.messages(for: sessionKey)
             // Don't clobber a turn the user started while this loaded.
             guard !isGenerating else { return }
-            if fresh.map(\.text) != messages.map(\.text) {
+            if fresh != messages.map(\.item) {
                 messages = fresh.map(ChatMessage.init)
             }
         } catch {
@@ -341,6 +347,7 @@ struct ChatInterfaceView: View {
     private func makeConversation() -> HermesConversation {
         let chat = HermesConversation(storedKey: sessionKey)
         chat.onDelta = { delta in
+            reasoningID = nil
             if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
                 messages[index].text += delta
             } else {
@@ -349,11 +356,38 @@ struct ChatInterfaceView: View {
                 messages.append(message)
             }
         }
+        // Text sent before a tool call is its own segment; whatever streams next starts a new one.
+        chat.onInterim = { text, alreadyStreamed in
+            if !alreadyStreamed { messages.append(ChatMessage(text: text, isUser: false)) }
+            streamingID = nil
+        }
+        chat.onReasoning = { text, replace in
+            streamingID = nil
+            if let id = reasoningID, let index = messages.firstIndex(where: { $0.id == id }) {
+                messages[index].text = replace ? text : messages[index].text + text
+            } else {
+                let message = ChatMessage(HermesMessage(role: "reasoning", text: text))
+                reasoningID = message.id
+                messages.append(message)
+            }
+        }
+        chat.onToolStart = { tool in
+            streamingID = nil
+            reasoningID = nil
+            messages.append(ChatMessage(HermesMessage(role: "tool", text: "", tool: tool)))
+        }
+        chat.onToolComplete = { id, summary in
+            guard let index = messages.lastIndex(where: { $0.tool?.id == id }) else { return }
+            messages[index].tool?.isDone = true
+            messages[index].tool?.summary = summary
+        }
+        // The final text is the last segment only, so it replaces just that one.
         chat.onComplete = { finalText in
             if let finalText, !finalText.isEmpty {
                 if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
                     messages[index].text = finalText
-                } else {
+                } else if messages.last?.item != HermesMessage(role: "assistant", text: finalText) {
+                    // Unless an interim message already sealed this same text.
                     messages.append(ChatMessage(text: finalText, isUser: false))
                 }
             }
@@ -371,11 +405,16 @@ struct ChatInterfaceView: View {
             messages.append(ChatMessage(text: "⚠️ \(error)", isUser: false))
         }
         streamingID = nil
+        reasoningID = nil
         isGenerating = false
+        // An interrupted or failed turn leaves no spinner running.
+        for index in messages.indices where messages[index].tool?.isDone == false {
+            messages[index].tool?.isDone = true
+        }
         if let key = hermesChat?.storedKey ?? sessionKey {
             let transcript = messages
-                .filter { !($0.text.hasPrefix("⚠️ ") && !$0.isUser) }
-                .map { HermesMessage(role: $0.isUser ? "user" : "assistant", text: $0.text) }
+                .filter { !($0.role == "assistant" && $0.text.hasPrefix("⚠️ ")) }
+                .map(\.item)
             HermesClient.shared.cacheMessages(transcript, for: key)
         }
         Task { await HermesClient.shared.refreshSessions() }
@@ -384,19 +423,24 @@ struct ChatInterfaceView: View {
 
 // MARK: - Chat Message Model
 
+/// A transcript item with a stable identity for the list; reads and writes pass through to it.
+@dynamicMemberLookup
 private struct ChatMessage: Identifiable {
     let id = UUID()
-    var text: String
-    let isUser: Bool
+    var item: HermesMessage
+
+    init(_ item: HermesMessage) { self.item = item }
 
     init(text: String, isUser: Bool) {
-        self.text = text
-        self.isUser = isUser
+        self.init(HermesMessage(role: isUser ? "user" : "assistant", text: text))
     }
 
-    init(_ message: HermesMessage) {
-        self.init(text: message.text, isUser: message.role == "user")
+    subscript<T>(dynamicMember path: WritableKeyPath<HermesMessage, T>) -> T {
+        get { item[keyPath: path] }
+        set { item[keyPath: path] = newValue }
     }
+
+    subscript<T>(dynamicMember path: KeyPath<HermesMessage, T>) -> T { item[keyPath: path] }
 }
 
 #Preview {

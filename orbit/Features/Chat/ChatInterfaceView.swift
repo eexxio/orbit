@@ -71,41 +71,41 @@ struct ChatInterfaceView: View {
 
     // MARK: - Empty State
 
+    /// Deliberately quiet: says who you are about to talk to, then gets out of the way of the composer.
     private var emptyState: some View {
-        VStack(spacing: 22) {
-            Spacer()
+        VStack(spacing: 8) {
+            Text("New chat")
+                .font(.title3.weight(.semibold))
 
-            Image(systemName: "sparkle")
-                .font(.system(size: 34, weight: .medium))
-                .foregroundStyle(.primary)
-                .frame(width: 68, height: 68)
-                .background(
-                    Color(uiColor: .secondarySystemBackground),
-                    in: RoundedRectangle(cornerRadius: 22)
-                )
-
-            VStack(spacing: 7) {
-                Text("What can I help with?")
-                    .font(.title2.weight(.semibold))
-
-                Text("Ask a question, explore an idea, or get something done.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(connectionColor)
+                    .frame(width: 6, height: 6)
+                Text(destination)
             }
-
-            VStack(spacing: 10) {
-                suggestion("Explain something to me")
-                suggestion("Help me write or brainstorm")
-                suggestion("Plan a project")
-            }
-            .padding(.horizontal, 28)
-
-            Spacer()
-            Spacer()
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
         }
-        .frame(maxWidth: .infinity)
-        .padding()
+        .padding(.horizontal, 32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Sit a little above center, where the eye lands, not behind the keyboard.
+        .offset(y: -40)
+    }
+
+    /// "default · hermes.local", the profile and host this chat will run on.
+    private var destination: String {
+        let client = HermesClient.shared
+        guard let host = client.baseURL?.host() else { return "No server set" }
+        return "\(client.profile) · \(host)"
+    }
+
+    private var connectionColor: Color {
+        switch HermesClient.shared.state {
+        case .connected: .green
+        case .connecting: .orange
+        case .disconnected, .failed: .secondary
+        }
     }
 
     // MARK: - Conversation
@@ -289,33 +289,6 @@ struct ChatInterfaceView: View {
 
     private var canSend: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    // MARK: - Suggestions
-
-    private func suggestion(_ title: String) -> some View {
-        Button {
-            draft = title
-            composerIsFocused = true
-        } label: {
-            HStack {
-                Text(title)
-
-                Spacer()
-
-                Image(systemName: "arrow.up.left")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .font(.subheadline)
-            .foregroundStyle(.primary)
-            .padding(14)
-            .background(
-                Color(uiColor: .secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: 14)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Send Message

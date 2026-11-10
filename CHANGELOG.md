@@ -13,6 +13,7 @@ All notable changes to this project are documented here. The format follows
 - On-device cache of the most recent conversations for instant and offline reading.
 - Redesigned composer that stays pinned above the keyboard.
 - Opening the keyboard pushes the conversation up so the latest messages stay visible above it.
+- A plainer new-chat screen that shows the profile, server and connection status instead of stock prompts.
 - Pixel-art app icon (a planet with an orbiting satellite), with dark and tinted versions.
 - Redesigned Settings with the orbit logo, a connection status pill, and an About section.
 - Edit the agent's SOUL.md (its personality) from Settings.

@@ -23,3 +23,6 @@ All notable changes to this project are documented here. The format follows
 - See the agent's thinking as a collapsible block and its tool calls as compact rows, live and in loaded chats.
 - A Settings toggle to show or hide the agent's tool calls in chats.
 - The "Thinking…" indicator shown while the agent works matches the thinking block, and steps aside while a tool call shows its own spinner.
+
+### Fixed
+- Leaving a chat while the agent is replying no longer drops the reply: it keeps streaming, and reopening the chat shows the thinking and the reply as they arrive.

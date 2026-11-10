@@ -43,6 +43,9 @@ final class HermesClient {
     @ObservationIgnored private var pageToken: String?
     @ObservationIgnored private var signedIn = false
     @ObservationIgnored private var signInTask: Task<Void, Error>?
+    /// Chats with a turn running or a screen showing them, by session key, so leaving a chat
+    /// mid-reply doesn't drop it. Not observed: views watch the `LiveChat` itself.
+    @ObservationIgnored private var liveChats: [String: LiveChat] = [:]
 
     private init() {
         let d = UserDefaults.standard
@@ -74,6 +77,7 @@ final class HermesClient {
 
     /// Drops any sign-in and connects again with the current settings.
     func connect() async {
+        shutDownLiveChats()
         signOutLocally()
         cache = ConversationCache(address: address, username: username)
         sessions = cache.sessions
@@ -86,6 +90,7 @@ final class HermesClient {
     }
 
     func disconnect() {
+        shutDownLiveChats()
         signOutLocally()
         cache.clear()
         sessions = []
@@ -147,6 +152,26 @@ final class HermesClient {
             state = .failed(error.localizedDescription)
             throw error
         }
+    }
+
+    // MARK: Live chats
+
+    /// The chat already running for this key, or a fresh one that loads its history.
+    func liveChat(for key: String?) -> LiveChat {
+        if let key, let live = liveChats[key] { return live }
+        return LiveChat(key: key)
+    }
+
+    func keepLive(_ chat: LiveChat, as key: String) { liveChats[key] = chat }
+
+    func releaseLive(_ chat: LiveChat, key: String) {
+        if liveChats[key] === chat { liveChats[key] = nil }
+    }
+
+    private func shutDownLiveChats() {
+        let chats = liveChats.values
+        liveChats = [:]
+        chats.forEach { $0.shutDown() }
     }
 
     // MARK: REST

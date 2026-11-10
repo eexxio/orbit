@@ -464,8 +464,6 @@ struct ChatInterfaceView: View {
 private struct ChatMessage: Identifiable {
     let id = UUID()
     var item: HermesMessage
-    /// Generation speed, for replies streamed in this session (not kept in the cache).
-    var rate: TokenRate?
 
     init(_ item: HermesMessage) { self.item = item }
 

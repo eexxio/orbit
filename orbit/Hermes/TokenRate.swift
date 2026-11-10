@@ -5,7 +5,7 @@ import Foundation
 /// The clock starts at the first streamed word, so time spent thinking or running tools
 /// before the reply begins doesn't drag the number down. When the host reports how many
 /// tokens it generated the rate is exact; otherwise it's estimated from the text length.
-nonisolated struct TokenRate: Equatable, Sendable {
+nonisolated struct TokenRate: Codable, Hashable, Sendable {
     let tokens: Int
     let seconds: Double
     /// True when `tokens` is a length-based guess rather than the host's own count.

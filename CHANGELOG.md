@@ -19,7 +19,7 @@ All notable changes to this project are documented here. The format follows
 - Edit the agent's SOUL.md (its personality) from Settings.
 - Choose a theme (System, Light, Dark) and an accent color for buttons, links and your chat bubbles.
 - New chats open with the message field focused and the keyboard up.
-- Each streamed reply shows its generation speed in tokens per second (estimated with ~ when the server doesn't report usage).
+- Each streamed reply shows its generation speed in tokens per second (estimated with ~ when the server doesn't report usage), and keeps it when you reopen the chat.
 - See the agent's thinking as a collapsible block and its tool calls as compact rows, live and in loaded chats.
 - A Settings toggle to show or hide the agent's tool calls in chats.
 - The "Thinking…" indicator shown while the agent works matches the thinking block, and steps aside while a tool call shows its own spinner.

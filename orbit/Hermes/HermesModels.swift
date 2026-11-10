@@ -13,6 +13,9 @@ struct HermesMessage: Codable, Hashable, Sendable {
     var text: String
     /// Optional so conversations cached before tool calls were shown still decode.
     var tool: HermesToolCall? = nil
+    /// How fast this reply streamed. Only the device saw that, so it lives in the cache alone;
+    /// optional so older cached conversations still decode.
+    var rate: TokenRate? = nil
 
     var isUser: Bool { role == "user" }
 }

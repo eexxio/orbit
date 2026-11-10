@@ -181,6 +181,7 @@ let satelliteHalo: [(x: Int, y: Int)] = {
 struct Theme {
     var sky: RGBA? = nil
     var stars = false
+    var starColors: (bright: RGBA, dim: RGBA, twinkle: RGBA, twinkleArms: RGBA) = (mist, slate, white, ash)
     var orbitFront: [RGBA]          // lit (left) → far (right)
     var orbitBack: RGBA
     var orbitOverPlanet: RGBA? = nil // where the near arc crosses the planet, if it needs more contrast
@@ -208,10 +209,11 @@ func mark(_ th: Theme) -> Canvas {
     func checker(_ x: Int, _ y: Int) -> Bool { (x + y) % 2 == 0 }
 
     if th.stars {
-        for (x, y) in [(4, 4), (27, 4), (5, 27), (29, 24), (12, 2), (23, 29), (2, 17)] { c[x, y] = mist }
-        for (x, y) in [(8, 8), (30, 14), (14, 29), (25, 26)] { c[x, y] = slate }
-        c[26, 7] = white
-        for (x, y) in [(25, 7), (27, 7), (26, 6), (26, 8)] { c[x, y] = ash }
+        let sc = th.starColors
+        for (x, y) in [(4, 4), (27, 4), (5, 27), (29, 24), (12, 2), (23, 29), (2, 17)] { c[x, y] = sc.bright }
+        for (x, y) in [(8, 8), (30, 14), (14, 29), (25, 26)] { c[x, y] = sc.dim }
+        c[26, 7] = sc.twinkle
+        for (x, y) in [(25, 7), (27, 7), (26, 6), (26, 8)] { c[x, y] = sc.twinkleArms }
     }
 
     for p in orbit where !p.front && !inPlanet(p.x, p.y) { c[p.x, p.y] = th.orbitBack }
@@ -339,6 +341,11 @@ let icon = mark(appIcon)
 for size in [32, 64, 128, 256, 512, 1024] { icon.save("\(root)/app-icon/icon-\(size).png", scale: size / N) }
 mark(onDark).save("\(root)/app-icon/icon-dark-1024.png", scale: 32)   // iOS dark appearance: no background
 icon.save("\(root)/app-icon/icon-tinted-1024.png", scale: 32)         // iOS tinted: grayscale, opaque
+// Light variant: white sky with dark stars, for an alternate icon or light-themed placements.
+var lightIcon = onLight; lightIcon.sky = white; lightIcon.stars = true
+lightIcon.starColors = (slate, fog, graphite, fog)
+let iconLight = mark(lightIcon)
+for size in [256, 1024] { iconLight.save("\(root)/app-icon/icon-light-\(size).png", scale: size / N) }
 
 // Social
 let wide = lockup(markDark, wordWhite, stacked: false)
@@ -358,3 +365,29 @@ print("wrote \(root)/colors/orbit.gpl")
 extension String {
     func leftPad(_ n: Int) -> String { String(repeating: " ", count: max(0, n - count)) + self }
 }
+
+// MARK: - Previews (docs only)
+
+/// Transparent assets disappear on a page of the same colour (a white wordmark on GitHub's light theme),
+/// so the guidelines show these tiles instead: each asset on the background it was made for, padded by
+/// the 4-pixel clear space.
+func tile(_ art: Canvas, on bg: RGBA) -> Canvas {
+    let a = art.trimmed()
+    var c = Canvas(a.w + 8, a.h + 8, bg)
+    c.blit(a, 4, 4)
+    return c
+}
+
+let previews: [(String, Canvas, RGBA, Int)] = [
+    ("mark-on-dark", markDark, void, 8), ("mark-on-light", markLight, white, 8),
+    ("mark-mono-white", monoMark(white), void, 8), ("mark-mono-black", monoMark(void), white, 8),
+    ("wordmark-on-dark", wordWhite, void, 8), ("wordmark-on-light", wordBlack, white, 8),
+    ("lockup-horizontal-on-dark", lockup(markDark, wordWhite, stacked: false), void, 6),
+    ("lockup-horizontal-on-light", lockup(markLight, wordBlack, stacked: false), white, 6),
+    ("lockup-stacked-on-dark", lockup(markDark, wordWhite, stacked: true), void, 6),
+    ("lockup-stacked-on-light", lockup(markLight, wordBlack, stacked: true), white, 6),
+]
+for (name, art, bg, scale) in previews { tile(art, on: bg).save("\(root)/preview/\(name).png", scale: scale) }
+// The dark-appearance icon is transparent; iOS draws it over a dark backdrop, so preview it on Void.
+var darkBackdrop = Canvas(N, N, void); darkBackdrop.blit(mark(onDark), 0, 0)
+darkBackdrop.save("\(root)/preview/icon-dark.png", scale: 8)

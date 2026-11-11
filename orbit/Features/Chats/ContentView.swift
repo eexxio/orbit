@@ -8,6 +8,9 @@ struct ContentView: View {
 
     @State private var startNewChat = false
 
+    /// A chat the launch arguments asked for; only the screenshot job passes one.
+    @State private var openedChat: String?
+
     private var client: HermesClient { HermesClient.shared }
 
     var body: some View {
@@ -61,10 +64,19 @@ struct ContentView: View {
                 ChatInterfaceView()
                     .navigationBarTitleDisplayMode(.inline)
             }
+            .navigationDestination(item: $openedChat) { key in
+                ChatInterfaceView(sessionKey: key)
+                    .navigationBarTitleDisplayMode(.inline)
+            }
             .task {
                 if client.isConfigured, client.state == .disconnected {
                     await client.connect()
                 }
+                #if DEBUG
+                if openedChat == nil, let key = ScreenshotLaunch.chat {
+                    openedChat = key
+                }
+                #endif
             }
             .onAppear {
                 if client.state == .connected {

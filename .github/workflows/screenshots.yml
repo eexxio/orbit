@@ -1,0 +1,105 @@
+name: Screenshots
+
+# Boots the app in the iOS simulator against a mock Hermes dashboard and uploads
+# PNGs as artifacts. This is a visual smoke test, not a UI test: there is no test
+# target yet (see #21), so it drives the app with simctl and fixed waits.
+on:
+  workflow_dispatch:
+  push:
+    branches: [screenshot-probe]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    name: Capture screenshots
+    runs-on: xcode-27
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode 27.2
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app && xcodebuild -version
+
+      - name: Build for the simulator
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project orbit.xcodeproj \
+            -scheme orbit \
+            -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=27.2' \
+            -derivedDataPath build \
+            build CODE_SIGNING_ALLOWED=NO \
+            | tail -40
+
+      - name: Start the mock dashboard
+        run: |
+          python3 .github/screenshot/mock_hermes.py --port 8765 > mock.log 2>&1 &
+          for _ in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:8765/api/status > /dev/null; then
+              echo "mock is up:"
+              curl -s http://127.0.0.1:8765/api/status
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "mock never answered"
+          cat mock.log
+          exit 1
+
+      - name: Boot the simulator
+        id: sim
+        run: |
+          UDID=$(python3 .github/screenshot/pick_simulator.py)
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl status_bar "$UDID" override \
+            --time "9:41" --batteryState charged --batteryLevel 100 \
+            --cellularBars 4 --wifiBars 3
+
+      - name: Install and launch against the mock
+        run: |
+          UDID='${{ steps.sim.outputs.udid }}'
+          xcrun simctl install "$UDID" build/Build/Products/Debug-iphonesimulator/orbit.app
+          xcrun simctl launch --terminate-running-process "$UDID" app.orbit.chat.t57W5S7S5C8 \
+            -hermes.address http://127.0.0.1:8765
+          sleep 10
+          echo "--- mock requests ---"
+          cat mock.log
+
+      - name: Shoot
+        run: |
+          UDID='${{ steps.sim.outputs.udid }}'
+          mkdir -p screenshots
+          xcrun simctl ui "$UDID" appearance light
+          sleep 1
+          xcrun simctl io "$UDID" screenshot screenshots/chats-light.png
+          xcrun simctl ui "$UDID" appearance dark
+          sleep 2
+          xcrun simctl io "$UDID" screenshot screenshots/chats-dark.png
+          ls -la screenshots
+
+      - name: Keep the app's console log, whatever happened
+        if: always()
+        run: |
+          UDID='${{ steps.sim.outputs.udid }}'
+          xcrun simctl spawn "$UDID" log show --last 3m \
+            --predicate 'process == "orbit"' --style compact > sim-log.txt 2>&1 || true
+          tail -100 sim-log.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orbit-screenshots
+          path: |
+            screenshots/*.png
+            mock.log
+            sim-log.txt
+          retention-days: 14

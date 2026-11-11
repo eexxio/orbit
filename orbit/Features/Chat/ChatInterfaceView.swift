@@ -100,61 +100,63 @@ struct ChatInterfaceView: View {
     // MARK: - Conversation
 
     private var conversation: some View {
-        ScrollViewReader { proxy in
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                let copies = replyCopies
-                // Hidden tool calls stay in `messages`, so the cache and the toggle keep them.
-                ForEach(showToolCalls ? chat.messages : chat.messages.filter { $0.tool == nil }) { message in
-                    messageRow(message, copyText: copies[message.id])
-                }
-
-                if showsWaitingIndicator {
-                    // Styled like a live thinking row, so the wait and the thinking read as one thing.
-                    HStack(spacing: 6) {
-                        Image(systemName: "brain")
-                            .symbolEffect(.pulse)
-                        Text("Thinking…")
+        GeometryReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 24) {
+                    let copies = replyCopies
+                    // Hidden tool calls stay in `messages`, so the cache and the toggle keep them.
+                    ForEach(showToolCalls ? chat.messages : chat.messages.filter { $0.tool == nil }) { message in
+                        messageRow(message, copyText: copies[message.id])
                     }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                }
 
-                Color.clear
-                    .frame(height: 1)
-                    .id(Self.bottomID)
+                    if showsWaitingIndicator {
+                        // Styled like a live thinking row, so the wait and the thinking read as one thing.
+                        HStack(spacing: 6) {
+                            Image(systemName: "brain")
+                                .symbolEffect(.pulse)
+                            Text("Thinking…")
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
+                // A conversation stacks up from the composer: a short one sits just above
+                // the input field instead of hanging from the navigation bar and leaving a
+                // well of empty space above it.
+                .frame(minHeight: proxy.size.height, alignment: .bottom)
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 8)
-            .padding(.bottom, 16)
-        }
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
-        // When the keyboard shrinks the view, keep the bottom edge fixed so the
-        // conversation moves up with it instead of sliding behind the keyboard.
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
-        .scrollDismissesKeyboard(.interactively)
-        .scrollPosition($scrollPosition)
-        // The keyboard (or a taller composer) covers the bottom of the conversation by
-        // growing its insets, which a size-change anchor never sees. Shift the content up
-        // by the same amount so the messages that were just above the composer stay there.
-        .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { old, new in
-            let covered = (new.contentInsets.bottom - new.containerSize.height)
-                - (old.contentInsets.bottom - old.containerSize.height)
-            guard covered > 1 else { return }
-            let maxOffset = new.contentSize.height + new.contentInsets.bottom - new.containerSize.height
-            let target = min(new.contentOffset.y + covered, maxOffset)
-            guard target > new.contentOffset.y + 1 else { return }
-            scrollPosition.scrollTo(y: target)
-        }
-        .onAppear { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
-        // A loaded or refreshed history, a sent message, and each streamed word.
-        .onChange(of: scrollToken) {
-            proxy.scrollTo(Self.bottomID, anchor: .bottom)
-        }
+            // An existing chat opens at its newest message, however long its history is.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            .scrollDismissesKeyboard(.interactively)
+            .scrollPosition($scrollPosition)
+            // The rows of a lazy stack report their real height a frame or two after they
+            // appear, and the keyboard (or a taller composer) grows the bottom inset. Both
+            // push the newest message below the composer unless the view follows them down.
+            .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { old, new in
+                let grewContent = new.contentSize.height > old.contentSize.height + 0.5
+                let grewInset = new.contentInsets.bottom > old.contentInsets.bottom + 0.5
+                guard grewContent || grewInset else { return }
+                pinToBottom()
+            }
+            .onAppear { pinToBottom() }
+            // A loaded or refreshed history, a sent message, and each streamed word.
+            .onChange(of: scrollToken) { pinToBottom() }
         }
     }
 
-    private static let bottomID = "conversation-bottom"
+    /// Puts the newest message directly above the composer.
+    ///
+    /// Scrolling to an edge rather than to a view id: on the first layout pass a lazy
+    /// stack has not realized its last row yet, so an id-based scroll has nothing to aim
+    /// at and the chat opens short of the bottom. The edge also keeps its position when
+    /// the content grows, which is what streaming and late layout both need.
+    private func pinToBottom() {
+        scrollPosition.scrollTo(edge: .bottom)
+    }
 
     /// Changes whenever the newest content changes, so the view follows it to the bottom.
     private var scrollToken: String {

@@ -22,6 +22,7 @@ final class LiveChat {
     var isGenerating: Bool { replyState.isActive }
     /// True while an existing chat's history loads and nothing is cached to show.
     private(set) var isLoadingHistory = false
+    private(set) var isRefreshingHistory = false
     /// The reply text and thinking blocks still being streamed into, if any.
     private(set) var streamingID: UUID?
     private(set) var reasoningID: UUID?
@@ -48,18 +49,43 @@ final class LiveChat {
 
         // The cached copy shows at once; the server's copy replaces it when it arrives.
         if let cached = client.cachedMessages(for: key), !cached.isEmpty {
-            messages = cached.map(ChatMessage.init)
+            messages = cached.map {
+                var message = ChatMessage($0)
+                message.isToolPreview = message.tool != nil
+                return message
+            }
         } else {
             isLoadingHistory = true
         }
         defer { isLoadingHistory = false }
+        await refreshHistory()
+    }
 
+    func refreshHistory() async {
+        guard let key, !isGenerating, !isRefreshingHistory else { return }
+        let prompt = latestPromptID
+        isRefreshingHistory = true
+        defer { isRefreshingHistory = false }
         do {
-            let fresh = try await client.messages(for: key)
+            let fresh = try await HermesClient.shared.messages(for: key)
             // Don't clobber a turn the user started while this loaded.
-            guard latestPromptID == nil else { return }
+            guard latestPromptID == prompt else { return }
             if fresh != messages.map(\.item) {
-                messages = fresh.map(ChatMessage.init)
+                let byCall = Dictionary(grouping: messages.compactMap { message in
+                    message.tool.map { ($0.identity, message.id) }
+                }, by: \.0)
+                let counts = Dictionary(grouping: fresh.compactMap { $0.tool?.identity }, by: { $0 })
+                // Don't keep a selection by guessing which instance of a reused call ID was tapped.
+                messages = fresh.map { item in
+                    let id = item.tool.flatMap { tool -> UUID? in
+                        guard !tool.id.isEmpty, counts[tool.identity]?.count == 1,
+                              let prior = byCall[tool.identity], prior.count == 1 else { return nil }
+                        return prior.first?.1
+                    } ?? UUID()
+                    return ChatMessage(item, id: id)
+                }
+            } else {
+                for index in messages.indices { messages[index].isToolPreview = false }
             }
         } catch {
             // Offline with a cached copy: keep showing it.
@@ -171,16 +197,28 @@ final class LiveChat {
             guard let self, isGenerating, pendingInterrupt == nil else { return }
             streamingID = nil
             reasoningID = nil
-            let message = ChatMessage(HermesMessage(role: "tool", text: "", tool: tool))
+            var started = tool
+            started.startedAt = .now
+            let message = ChatMessage(HermesMessage(role: "tool", text: "", tool: started))
             liveToolIDs.insert(message.id)
             messages.append(message)
         }
-        chat.onToolComplete = { [weak self] id, summary in
-            guard let self, isGenerating, pendingInterrupt == nil,
-                  let index = messages.lastIndex(where: { $0.tool?.id == id && self.liveToolIDs.contains($0.id) }) else { return }
-            liveToolIDs.remove(messages[index].id)
-            messages[index].tool?.isDone = true
-            messages[index].tool?.summary = summary
+        chat.onToolProgress = { [weak self] id, payload in
+            guard let self, isGenerating, pendingInterrupt == nil, let index = liveToolIndex(for: id) else { return }
+            messages[index].tool?.updateProgress(payload)
+        }
+        chat.onToolComplete = { [weak self] id, payload in
+            guard let self, isGenerating, pendingInterrupt == nil else { return }
+            if let index = liveToolIndex(for: id) {
+                liveToolIDs.remove(messages[index].id)
+                messages[index].tool?.complete(with: payload)
+            } else if var tool = HermesToolCall(live: payload) {
+                // Upstream can emit a failed completion even when tool progress is hidden.
+                streamingID = nil
+                reasoningID = nil
+                tool.complete(with: payload)
+                messages.append(ChatMessage(HermesMessage(role: "tool", text: "", tool: tool)))
+            }
         }
         // The final text is the last segment only, so it replaces just that one.
         chat.onComplete = { [weak self] finalText, outputTokens, failure in
@@ -214,6 +252,10 @@ final class LiveChat {
         return chat
     }
 
+    private func liveToolIndex(for id: String) -> Int? {
+        messages.lastIndex { $0.tool?.id == id && liveToolIDs.contains($0.id) }
+    }
+
     private func finishTurn(as state: ReplyState) {
         guard isGenerating else { return }
         streamingID = nil
@@ -245,10 +287,14 @@ final class LiveChat {
 /// A transcript item with a stable identity for the list; reads and writes pass through to it.
 @dynamicMemberLookup
 struct ChatMessage: Identifiable {
-    let id = UUID()
+    let id: UUID
     var item: HermesMessage
+    var isToolPreview = false
 
-    init(_ item: HermesMessage) { self.item = item }
+    init(_ item: HermesMessage, id: UUID = UUID()) {
+        self.item = item
+        self.id = id
+    }
 
     init(text: String, isUser: Bool) {
         self.init(HermesMessage(role: isUser ? "user" : "assistant", text: text))

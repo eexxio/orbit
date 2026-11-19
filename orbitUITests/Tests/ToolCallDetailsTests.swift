@@ -1,0 +1,135 @@
+import XCTest
+
+@MainActor
+final class ToolCallDetailsTests: XCTestCase {
+    private let fixtureID = UUID()
+    private var address: String { "http://127.0.0.1:18765/\(fixtureID)" }
+
+    func testOpenRunningToolAndWatchItComplete() async throws {
+        let app = launch(address)
+        send("Read the project notes", in: app)
+        try await advance("tool-short", phase: "delta")
+        open(in: app)
+        XCTAssertEqual(detail("name", in: app).label, "read_file")
+        XCTAssertTrue(detail("status", in: app).label.contains("Running"))
+        XCTAssertTrue(payload("input", in: app).contains("PROJECT.md"))
+        XCTAssertTrue(detail("output", in: app).label.contains("Waiting for output"))
+        screenshot("tool-running")
+
+        try await advance("tool-short", phase: "end")
+        let status = detail("status", in: app)
+        let completed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "Completed"), object: status)
+        await fulfillment(of: [completed], timeout: 10)
+        XCTAssertTrue(status.label.contains("0.42"))
+        XCTAssertTrue(payload("output", in: app).contains("Release checklist"))
+        screenshot("tool-short-output")
+        app.buttons["tool.details.done"].tap()
+        XCTAssertTrue(app.buttons["chat.tool.row"].firstMatch.waitForExistence(timeout: 5))
+    }
+
+    func testLongOutputIsCompleteAndScrollable() async throws {
+        let app = launch(address)
+        send("Read the build log", in: app)
+        try await advance("tool-long", phase: "delta")
+        try await advance("tool-long", phase: "end")
+        XCTAssertTrue(app.buttons["chat.reply.completed"].waitForExistence(timeout: 10))
+        open(in: app)
+        XCTAssertTrue(payload("output", in: app).contains("0001 | Asset catalog check passed"))
+        screenshot("tool-long-output")
+        let scroll = app.scrollViews["tool.details"]
+        let showAll = app.buttons["tool.details.showAll"]
+        for _ in 0..<4 where !showAll.isHittable { scroll.swipeUp() }
+        XCTAssertTrue(showAll.label.contains("3201"))
+        showAll.tap()
+        XCTAssertTrue(app.buttons["tool.details.copy.output"].exists)
+        XCTAssertFalse(showAll.exists)
+    }
+
+    func testFailedCompletionCanBeOpenedWithoutAStartEvent() async throws {
+        let app = launch(address)
+        send("Read a missing file", in: app)
+        try await advance("tool-failed", phase: "delta")
+        open(in: app)
+        XCTAssertTrue(detail("status", in: app).label.contains("Failed"))
+        XCTAssertTrue(detail("status", in: app).label.contains("exit 1"))
+        XCTAssertTrue(payload("input", in: app).contains("drafts/release-notes.md"))
+        XCTAssertTrue(payload("output", in: app).contains("File not found"))
+        screenshot("tool-failed")
+    }
+
+    func testSavedResultsAreMatchedByCallIDInsteadOfOrder() {
+        let app = launch("http://127.0.0.1:18765/tool-history-\(fixtureID)")
+        let previous = app.buttons["Saved tool calls"].firstMatch
+        XCTAssertTrue(previous.waitForExistence(timeout: 10))
+        previous.tap()
+        open(in: app)
+        XCTAssertTrue(payload("input", in: app).contains("NOTES.md"))
+        XCTAssertTrue(payload("output", in: app).contains("Archived notes"))
+        if UIDevice.current.userInterfaceIdiom != .pad {
+            app.buttons["tool.details.done"].tap()
+        }
+        open(in: app, index: 1)
+        XCTAssertEqual(payload("output", in: app), "Readme result")
+    }
+
+    private func launch(_ address: String) -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-hermes.address", address, "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        return app
+    }
+
+    private func send(_ text: String, in app: XCUIApplication) {
+        let newChat = app.buttons["chats.new"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 10))
+        newChat.tap()
+        let field = app.descendants(matching: .any)["chat.composer"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        field.typeText(text)
+        let send = app.buttons["chat.send"]
+        send.tap()
+        let sent = app.staticTexts[text]
+        if !sent.waitForExistence(timeout: 2), field.value as? String == text, send.isEnabled { send.tap() }
+        XCTAssertTrue(sent.waitForExistence(timeout: 5))
+    }
+
+    private func open(in app: XCUIApplication, index: Int = 0) {
+        let row = app.buttons.matching(identifier: "chat.tool.row").element(boundBy: index)
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        XCTAssertTrue(detail("name", in: app).waitForExistence(timeout: 5))
+        if UIDevice.current.userInterfaceIdiom != .pad {
+            let title = detail("name", in: app)
+            let handle = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
+                .withOffset(CGVector(dx: 0, dy: -14))
+            handle.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)))
+        }
+    }
+
+    private func detail(_ name: String, in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@", "tool.details.\(name)")).firstMatch
+    }
+
+    private func payload(_ name: String, in app: XCUIApplication) -> String {
+        let element = detail(name, in: app)
+        XCTAssertTrue(element.waitForExistence(timeout: 5))
+        return element.value as? String ?? element.label
+    }
+
+    private func advance(_ scenario: String, phase: String) async throws {
+        var request = URLRequest(url: URL(string: "\(address)/fixture/\(scenario)/\(phase)")!, timeoutInterval: 5)
+        request.httpMethod = "POST"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 204)
+    }
+
+    private func screenshot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

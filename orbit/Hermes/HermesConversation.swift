@@ -25,7 +25,8 @@ final class HermesConversation {
     /// Thinking text; `replace` swaps the current block's text instead of appending to it.
     var onReasoning: ((_ text: String, _ replace: Bool) -> Void)?
     var onToolStart: ((HermesToolCall) -> Void)?
-    var onToolComplete: ((_ id: String, _ summary: String?) -> Void)?
+    var onToolProgress: ((_ id: String, _ payload: JSON) -> Void)?
+    var onToolComplete: ((_ id: String, _ payload: JSON) -> Void)?
 
     private let client = HermesClient.shared
 
@@ -178,11 +179,11 @@ final class HermesConversation {
         case "reasoning.delta", "reasoning.available":
             if let text = payload["text"].text, !text.isEmpty { onReasoning?(text, event["type"].text == "reasoning.available") }
         case "tool.start":
-            guard let id = payload["tool_id"].text, let name = payload["name"].text else { return }
-            onToolStart?(HermesToolCall(id: id, name: name, context: payload["context"].text ?? "",
-                                        summary: nil, isDone: false))
+            if let tool = HermesToolCall(live: payload) { onToolStart?(tool) }
+        case "tool.progress":
+            if let id = payload["tool_id"].text { onToolProgress?(id, payload) }
         case "tool.complete":
-            if let id = payload["tool_id"].text { onToolComplete?(id, payload["summary"].text) }
+            if let id = payload["tool_id"].text { onToolComplete?(id, payload) }
         case "message.complete":
             if event["admission_id"].text != nil, event["execution_generation"] == .null { return }
             if payload["status"].text == "error" {

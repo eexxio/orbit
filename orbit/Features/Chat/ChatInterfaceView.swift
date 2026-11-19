@@ -5,12 +5,14 @@ import MarkdownUI
 struct ChatInterfaceView: View {
 
     /// The Hermes session this chat shows; nil starts a new one on the first message.
-    let sessionKey: String?
+    let session: HermesSession?
+    let onNewChat: (String?) -> Void
 
-    init(sessionKey: String? = nil) {
-        self.sessionKey = sessionKey
+    init(session: HermesSession? = nil, profile: String? = nil, onNewChat: @escaping (String?) -> Void = { _ in }) {
+        self.session = session
+        self.onNewChat = onNewChat
         // A chat still replying in the background comes back as it is, not reloaded.
-        _chat = State(initialValue: HermesClient.shared.liveChat(for: sessionKey))
+        _chat = State(initialValue: HermesClient.shared.liveChat(for: session, profile: profile))
     }
 
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
@@ -23,22 +25,45 @@ struct ChatInterfaceView: View {
     @FocusState private var composerIsFocused: Bool
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if chat.isLoadingHistory && chat.messages.isEmpty {
-                    loadingState
-                } else if chat.messages.isEmpty {
-                    emptyState
-                } else {
-                    conversation
-                }
+        Group {
+            if chat.isLoadingHistory && chat.messages.isEmpty {
+                loadingState
+            } else if chat.messages.isEmpty {
+                emptyState
+            } else {
+                conversation
             }
-            .background(Color(uiColor: .systemBackground))
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+        }
+        .background(Color(uiColor: .systemBackground))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if chat.isProfileGone {
+                VStack(spacing: 6) {
+                    Text(HermesError.profileGone.localizedDescription)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("New chat") { onNewChat(nil) }
+                }
+                .padding()
+            } else {
                 composer
             }
         }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                ChatModelTitle(chat: chat, onOpen: { composerIsFocused = false }, onNewChat: onNewChat)
+            }
+        }
         .task { await chat.loadHistory() }
+        .task(id: chat.profile) {
+            let client = HermesClient.shared
+            let profile = chat.profile
+            if client.profiles.isEmpty { _ = try? await client.chatProfiles() }
+            if !Task.isCancelled, chat.isDraft, client.modelCatalogs[profile] == nil,
+               client.profiles.first(where: { $0.name == profile })?.model == nil {
+                _ = try? await client.chatModels(profile: profile, refresh: false)
+            }
+        }
         .task { await focusComposerForNewChat() }
         .onAppear { chat.isOnScreen = true }
         // Only lets the chat go if no turn is running; otherwise it finishes in the background.
@@ -67,35 +92,11 @@ struct ChatInterfaceView: View {
             Text("New chat")
                 .font(.title3.weight(.semibold))
 
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(connectionColor)
-                    .frame(width: 6, height: 6)
-                Text(destination)
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
         }
         .padding(.horizontal, 32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Sit a little above center, where the eye lands, not behind the keyboard.
         .offset(y: -40)
-    }
-
-    /// "default · hermes.local", the profile and host this chat will run on.
-    private var destination: String {
-        let client = HermesClient.shared
-        guard let host = client.baseURL?.host() else { return "No server set" }
-        return "\(client.profile) · \(host)"
-    }
-
-    private var connectionColor: Color {
-        switch HermesClient.shared.state {
-        case .connected: .green
-        case .connecting: .orange
-        case .disconnected, .failed: .secondary
-        }
     }
 
     // MARK: - Conversation
@@ -116,6 +117,15 @@ struct ChatInterfaceView: View {
                     replyStatus
                         .transition(.opacity)
                         .animation(.default, value: chat.replyState)
+                    if let pending = chat.pendingModel {
+                        ModelChangeRow(model: pending.name, pending: true)
+                    }
+                    if let error = chat.modelError {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("chat.modelError")
+                    }
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 8)
@@ -157,7 +167,7 @@ struct ChatInterfaceView: View {
 
     /// Changes whenever the newest content changes, so the view follows it to the bottom.
     private var scrollToken: String {
-        "\(chat.messages.count)|\(chat.messages.last?.text.count ?? 0)|\(chat.replyState)"
+        "\(chat.messages.count)|\(chat.messages.last?.text.count ?? 0)|\(chat.replyState)|\(chat.pendingModel?.name ?? "")"
     }
 
     /// One copy button per agent reply, under its last text segment, copying all of the reply's
@@ -180,7 +190,9 @@ struct ChatInterfaceView: View {
 
     @ViewBuilder
     private func messageRow(_ message: ChatMessage, copyText: String?, isCompletedReply: Bool) -> some View {
-        if message.role == "reasoning" {
+        if message.role == "model-change" {
+            ModelChangeRow(model: message.text, pending: false)
+        } else if message.role == "reasoning" {
             ReasoningRow(text: message.text, isLive: message.id == chat.reasoningID)
         } else if let tool = message.tool {
             ToolCallRow(tool: tool, isLive: chat.liveToolIDs.contains(message.id))
@@ -289,7 +301,7 @@ struct ChatInterfaceView: View {
     }
 
     private var canSend: Bool {
-        !chat.isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        chat.canSend && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     // MARK: - Send Message
@@ -373,7 +385,7 @@ struct ChatInterfaceView: View {
     /// A new chat opens ready to type. The short wait lets the push transition settle,
     /// since focus set mid-animation is dropped and the keyboard never appears.
     private func focusComposerForNewChat() async {
-        guard sessionKey == nil, chat.messages.isEmpty else { return }
+        guard session == nil, chat.messages.isEmpty else { return }
         try? await Task.sleep(for: .milliseconds(450))
         // Recheck: a message sent during the wait already cleared focus on purpose.
         guard !Task.isCancelled, chat.messages.isEmpty, !chat.isGenerating else { return }

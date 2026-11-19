@@ -7,7 +7,7 @@ import struct
 import threading
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 GATES = defaultdict(threading.Event)
@@ -25,14 +25,33 @@ SCENARIOS = {
     "Stop while waiting": "stop-waiting",
     "Send the next reply": "next",
 }
+DEFAULT_MODEL = "example/sonnet"
+WORK_MODEL = "example/work-default"
+MODELS = [DEFAULT_MODEL, "example/opus", "example/guarded", "example/refused"]
+PROFILES = [
+    {"name": "default", "model": DEFAULT_MODEL, "description": "Personal Hermes"},
+    {"name": "work", "model": WORK_MODEL, "description": "Work projects"},
+]
+
+
+def options(fixture_id, profile, current=None):
+    names = ["example/work-fast", WORK_MODEL] if profile == "work" else MODELS
+    authenticated = not fixture_id.startswith("empty-")
+    return {"model": current or names[0], "provider": "example", "providers": [
+        {"slug": "example", "name": "Example AI", "models": names,
+         "is_current": True, "authenticated": authenticated},
+        {"slug": "unconfigured", "name": "Unconfigured", "models": ["hidden-model"], "authenticated": False},
+    ]}
 
 
 class HermesStub(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):
-        fixture_id, _, path = urlsplit(self.path).path.lstrip("/").partition("/")
+        parsed = urlsplit(self.path)
+        fixture_id, _, path = parsed.path.lstrip("/").partition("/")
         path = "/" + path
+        profile = parse_qs(parsed.query).get("profile", ["default"])[0]
         if path == "/fixture/state":
             with STATS_LOCK:
                 self.respond(json.dumps(STATS[fixture_id]).encode(), "application/json")
@@ -43,10 +62,40 @@ class HermesStub(BaseHTTPRequestHandler):
         if path == "/":
             self.respond(b'<script>window.__HERMES_SESSION_TOKEN__ = "fixture";</script>', "text/html")
             return
+        with STATS_LOCK:
+            state = STATS[fixture_id].copy()
+        if state.get("offline"):
+            self.close_connection = True
+            return
+        active = "work" if fixture_id.startswith("removed-") and not state.get("removed") else "default"
+        if state.get("removed") and profile == "work":
+            self.send_error(404)
+            return
+        if path == "/api/model/options" and fixture_id.startswith("skew-"):
+            self.send_response(503)
+            body = b'{"detail":"Restart required: Update the Hermes server"}'
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        switcher = fixture_id[0:1].islower()
+        if path == "/api/sessions/fixture/messages":
+            data = {"messages": [{"id": 1, "role": "assistant", "content": "Earlier chat history."}]}
+            self.respond(json.dumps(data).encode(), "application/json")
+            return
+        sessions = []
+        if switcher and profile == active:
+            model = "example/retired" if fixture_id.startswith("retired-") else DEFAULT_MODEL
+            sessions.append({"id": "fixture", "profile": profile, "title": "Existing chat", "model": state.get("model", model)})
+        if state.get("created_profile") == profile:
+            sessions.append({"id": "new-fixture", "profile": profile, "title": "Created chat",
+                             "model": state.get("created_model")})
         data = {
             "/api/status": {"auth_required": False, "version": "fixture"},
-            "/api/profiles/active": {"current": "default"},
-            "/api/sessions": {"sessions": []},
+            "/api/profiles/active": {"current": active},
+            "/api/profiles": {"profiles": PROFILES if switcher and not state.get("removed") else PROFILES[:1]},
+            "/api/model/options": options(fixture_id, profile),
+            "/api/sessions": {"sessions": sessions},
         }.get(path)
         if data is None:
             self.send_error(404)
@@ -55,6 +104,12 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path.split("/")
+        if len(path) == 4 and path[2] == "fixture" and path[3] in {"offline", "removed"}:
+            with STATS_LOCK:
+                STATS[path[1]][path[3]] = True
+            self.send_response(204)
+            self.end_headers()
+            return
         if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end", "interrupted"}:
             self.send_error(404)
             return
@@ -92,22 +147,84 @@ class HermesStub(BaseHTTPRequestHandler):
         self.stopped = threading.Event()
         self.interrupt_received = threading.Event()
         self.scenario = None
+        self.fixture_id = fixture_id
+        self.profile = "default"
+        self.runtime = "runtime"
+        self.stored = "fixture"
+        self.model = DEFAULT_MODEL
+        self.canonical = fixture_id.startswith(("canonical-", "conflict-", "fallback-", "retired-"))
         with STATS_LOCK:
             STATS[fixture_id]["connections"] += 1
         try:
-            self.event("gateway.ready")
+            self.event("gateway.ready", {"session_authority": self.canonical})
             while (request := self.read_request()) is not None:
                 method = request["method"]
+                params = request.get("params", {})
                 if method in {"session.create", "session.resume"}:
-                    self.result(request, {"session_id": "runtime", "stored_session_id": "fixture"})
+                    self.profile = params.get("profile", "default")
+                    with STATS_LOCK:
+                        state = STATS[fixture_id]
+                        if method == "session.create":
+                            self.model = params.get("model", WORK_MODEL if self.profile == "work" else DEFAULT_MODEL)
+                            if fixture_id[0:1].islower():
+                                self.stored = "new-fixture"
+                                state.update(created_profile=self.profile, created_model=self.model,
+                                             created_provider=params.get("provider", ""))
+                        else:
+                            self.stored = params.get("session_id", "fixture")
+                            if self.stored == "new-fixture":
+                                self.model = state.get("created_model", DEFAULT_MODEL)
+                            else:
+                                self.model = state.get("model", "example/retired" if fixture_id.startswith("retired-") else DEFAULT_MODEL)
+                            state["resumed_profile"] = self.profile
+                        revision = state.get("mutations", 0) + state.get("conflicts", 0) + 7
+                        if method == "session.resume":
+                            state["resumes"] = state.get("resumes", 0) + 1
+                    if self.canonical and "close_on_disconnect" in params:
+                        self.error(request, 4001, "Unexpected legacy parameter")
+                    else:
+                        self.result(request, {"session_id": self.stored if self.canonical else self.runtime,
+                                              "stored_session_id": self.stored, "execution_generation": 3,
+                                              "revision": revision, "running": False,
+                                              "info": {"model": self.model, "provider": "example"}})
+                elif method == "model.options":
+                    self.result(request, options(fixture_id, self.profile, self.model))
+                elif method == "session.mutate" and self.canonical:
+                    if fixture_id.startswith("conflict-") and not STATS[fixture_id].get("conflicts"):
+                        with STATS_LOCK:
+                            STATS[fixture_id]["conflicts"] = 1
+                        self.error(request, 4001, "Revision is stale", reason="revision_conflict")
+                    elif fixture_id.startswith("fallback-"):
+                        with STATS_LOCK:
+                            STATS[fixture_id]["unsupported_mutations"] = STATS[fixture_id].get("unsupported_mutations", 0) + 1
+                        self.error(request, -32601, "Method not found")
+                    elif (params.get("operation") != "model" or params.get("session_id") != self.stored
+                          or params.get("profile") != self.profile or params.get("expected_generation") != 3
+                          or params.get("expected_revision") != revision or not params.get("request_id")):
+                        self.error(request, 4001, "Invalid model mutation")
+                    else:
+                        payload = params["payload"]
+                        self.change_model(request, payload["model"], payload.get("confirm") == "fixture-confirm")
+                elif method == "config.set":
+                    pieces = params.get("value", "").split()
+                    session_id = self.stored if self.canonical else self.runtime
+                    if (params.get("session_id") != session_id or params.get("key") != "model"
+                            or len(pieces) != 4 or pieces[1:] != ["--provider", "example", "--session"]):
+                        self.error(request, 4001, "Must scope this switch to the live session")
+                    else:
+                        self.change_model(request, pieces[0], params.get("confirm_expensive_model", False))
                 elif method == "gateway.ping":
                     self.result(request, {})
                 elif method == "prompt.submit":
                     self.scenario = SCENARIOS.get(request["params"]["text"])
                     with STATS_LOCK:
                         STATS[fixture_id]["prompts"] += 1
-                    self.result(request, {})
-                    threading.Thread(target=self.reply, args=(fixture_id, request["params"]["text"]), daemon=True).start()
+                        STATS[fixture_id]["prompt_model"] = self.model
+                    if self.canonical and not params.get("input_id"):
+                        self.error(request, 4001, "input_id required")
+                    else:
+                        self.result(request, {"execution_generation": 3} if self.canonical else {})
+                        threading.Thread(target=self.reply, args=(fixture_id, request["params"]["text"]), daemon=True).start()
                 elif method == "session.interrupt":
                     self.interrupt_received.set()
                     GATES[fixture_id, self.scenario, "interrupted"].set()
@@ -137,7 +254,7 @@ class HermesStub(BaseHTTPRequestHandler):
             pass
 
     def stream_reply(self, fixture_id, text):
-        if text == "Send after reconnecting":
+        if text == "Send after reconnecting" or text not in SCENARIOS:
             self.event("message.complete", {"text": "The next reply arrived."})
             return True
         scenario = SCENARIOS[text]
@@ -216,11 +333,33 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def event(self, kind, payload=None):
         self.write_json({"jsonrpc": "2.0", "method": "event", "params": {
-            "type": kind, "session_id": "runtime", "payload": payload or {},
+            "type": kind, "session_id": self.stored if self.canonical else self.runtime, "payload": payload or {},
         }})
 
     def result(self, request, result):
         self.write_json({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+    def error(self, request, code, message, reason=None):
+        error = {"code": code, "message": message}
+        if reason:
+            error["data"] = {"reason": reason}
+        self.write_json({"jsonrpc": "2.0", "id": request["id"], "error": error})
+
+    def change_model(self, request, model, confirmed):
+        if model == "example/guarded" and not confirmed:
+            self.result(request, {"confirm_required": True, "confirm": "fixture-confirm",
+                                  "confirm_message": "This model costs more than your current model."})
+        elif model == "example/refused":
+            self.error(request, 4001, "This model is disabled for this account.")
+        else:
+            self.model = model
+            with STATS_LOCK:
+                state = STATS[self.fixture_id]
+                state["mutations"] = state.get("mutations", 0) + 1
+                state["mutation_method"] = request["method"]
+                key = "created_model" if self.stored == "new-fixture" else "model"
+                state[key] = model
+            self.result(request, {"model": model, "value": model, "provider": "example"})
 
     def write_json(self, value):
         self.write_frame(1, json.dumps(value).encode())

@@ -6,12 +6,15 @@ import Observation
 //   • POST /auth/password-login        – username/password, sets a session cookie
 //   • GET  /                           – an open dashboard's page carries its session token
 //   • GET  /api/profiles/active        – `{current}` profile name
+//   • GET  /api/profiles               – selectable profile names
+//   • GET  /api/model/options          – configured providers and models for a profile
 //   • GET  /api/sessions               – session list
 //   • GET  /api/sessions/{key}/messages – transcript
 //   • GET  /api/profiles/{name}/soul   – `{content, exists}`: the profile's SOUL.md
 //   • PUT  /api/profiles/{name}/soul   – `{content}` replaces SOUL.md
 //   • POST /api/auth/ws-ticket         – single-use ticket for the gateway socket
-//   • WS   /api/ws                     – JSON-RPC 2.0 gateway: session.create / session.resume /
+//   • WS   /api/ws                     – JSON-RPC 2.0 gateway: model.options / session.mutate (or
+//                                       legacy config.set for a live chat) / session.create / session.resume /
 //                                        prompt.submit / session.interrupt, streaming `message.delta` / `message.interim` /
 //                                        `message.complete`, `reasoning.delta` / `reasoning.available`,
 //                                        and `tool.start` / `tool.complete` events.
@@ -35,6 +38,10 @@ final class HermesClient {
     private(set) var state: State = .disconnected
     private(set) var serverVersion: String?
     private(set) var profile = "default"
+    private(set) var browsingProfile = "default"
+    private(set) var profiles: [HermesChatProfile] = []
+    private(set) var profileNotice: String?
+    private(set) var modelCatalogs: [String: HermesModelCatalog] = [:]
     private(set) var sessions: [HermesSession] = []
 
     @ObservationIgnored private(set) var cache: ConversationCache
@@ -103,6 +110,11 @@ final class HermesClient {
         signInTask?.cancel()
         signInTask = nil
         signedIn = false
+        profile = "default"
+        browsingProfile = "default"
+        profiles = []
+        profileNotice = nil
+        modelCatalogs = [:]
         pageToken = nil
         session.invalidateAndCancel()
         session = URLSession(configuration: .ephemeral)
@@ -144,6 +156,7 @@ final class HermesClient {
             }
             signedIn = true
             if let active = try? await getJSON("api/profiles/active"), let current = active["current"].text, !current.isEmpty {
+                if browsingProfile == profile { browsingProfile = current }
                 profile = current
             }
             state = .connected
@@ -157,9 +170,9 @@ final class HermesClient {
     // MARK: Live chats
 
     /// The chat already running for this key, or a fresh one that loads its history.
-    func liveChat(for key: String?) -> LiveChat {
-        if let key, let live = liveChats[key] { return live }
-        return LiveChat(key: key)
+    func liveChat(for row: HermesSession?, profile: String?) -> LiveChat {
+        if let row, let live = liveChats[row.id] { return live }
+        return LiveChat(session: row, profile: profile)
     }
 
     func keepLive(_ chat: LiveChat, as key: String) { liveChats[key] = chat }
@@ -176,33 +189,95 @@ final class HermesClient {
 
     // MARK: REST
 
+    @discardableResult
+    func chatProfiles() async throws -> [HermesChatProfile] {
+        try await ensureSignedIn()
+        let response = try await getJSON("api/profiles", timeout: 10)
+        guard let rows = response["profiles"].list else { throw HermesError.unsupported }
+        var seen = Set<String>()
+        profiles = rows.compactMap { row in
+            guard let name = row["name"].text, !name.isEmpty, seen.insert(name).inserted else { return nil }
+            let model = row["model"].text.flatMap { $0.isEmpty ? nil : $0 }
+            return HermesChatProfile(name: name, description: row["description"].text, model: model)
+        }
+        if !profiles.isEmpty, !profiles.contains(where: { $0.name == browsingProfile }) {
+            let removed = browsingProfile
+            let active = try? await getJSON("api/profiles/active")["current"].text
+            let fallback = [active, Optional(profile), profiles.first?.name].compactMap { $0 }
+                .first { name in profiles.contains { $0.name == name } } ?? "default"
+            if active == fallback { profile = fallback }
+            browse(fallback)
+            profileNotice = "Profile “\(removed)” was removed on the server. Showing “\(fallback)”."
+        }
+        return profiles
+    }
+
+    func chatModels(profile: String, refresh: Bool) async throws -> HermesModelCatalog {
+        try await ensureSignedIn()
+        do {
+            let result = try await getJSON("api/model/options", query: ["profile": profile, "refresh": String(refresh)],
+                                           timeout: 10)
+            let catalog = try HermesModelCatalog(result)
+            modelCatalogs[profile] = catalog
+            return catalog
+        } catch HermesError.http(503, let detail) where detail?.localizedCaseInsensitiveContains("restart") == true {
+            throw HermesError.modelListNeedsRestart
+        }
+    }
+
+    func browse(_ profile: String) {
+        guard profile != browsingProfile else { return }
+        browsingProfile = profile
+        profileNotice = nil
+        sessions = []
+        Task { await refreshSessions() }
+    }
+
     func refreshSessions() async {
         do {
             try await ensureSignedIn()
-            let json = try await getJSON("api/sessions", query: [
-                "profile": profile, "order": "recent", "archived": "exclude", "limit": "100", "offset": "0",
-                "min_messages": "1", "exclude_sources": "cron,kanban,oneshot,subagent,tool"
-            ])
-            sessions = (json["sessions"].list ?? []).compactMap { row in
-                // A row can be wrapped (`{session: {...}}`) on some releases.
-                let r = row["id"].text != nil ? row : row["session"]
-                guard let id = r["id"].text, !id.isEmpty, r["hidden"].flag != true else { return nil }
-                let title = r["title"].text.flatMap { $0.isEmpty ? nil : $0 }
-                    ?? r["preview"].text.flatMap { $0.isEmpty ? nil : String($0.prefix(60)) }
-                    ?? "New chat"
-                return HermesSession(id: id, title: title, lastActive: r["last_active"].double)
-            }
-            cache.store(sessions: sessions)
+            let currentCache = cache
+            let requested = browsingProfile
+            let rows = try await sessionRows(profile: requested)
+            guard cache === currentCache, browsingProfile == requested else { return }
+            var seen = Set<String>()
+            sessions = rows.filter { seen.insert($0.id).inserted }
+            if requested == profile { cache.store(sessions: sessions) }
             prefetchRecent()
+        } catch let error as HermesError {
+            guard case .http(404, _) = error else {
+                state = .failed(error.localizedDescription)
+                return
+            }
+            let requested = browsingProfile
+            _ = try? await chatProfiles()
+            if browsingProfile == requested { state = .failed(error.localizedDescription) }
         } catch {
             state = .failed(error.localizedDescription)
         }
     }
 
-    func messages(for key: String) async throws -> [HermesMessage] {
+    private func sessionRows(profile: String) async throws -> [HermesSession] {
+        let json = try await getJSON("api/sessions", query: [
+            "profile": profile, "order": "recent", "archived": "exclude", "limit": "100", "offset": "0",
+            "min_messages": "1", "exclude_sources": "cron,kanban,oneshot,subagent,tool"
+        ])
+        return (json["sessions"].list ?? []).compactMap { row in
+            // A row can be wrapped (`{session: {...}}`) on some releases.
+            let r = row["id"].text != nil ? row : row["session"]
+            guard let id = r["id"].text, !id.isEmpty, r["hidden"].flag != true else { return nil }
+            let title = r["title"].text.flatMap { $0.isEmpty ? nil : $0 }
+                ?? r["preview"].text.flatMap { $0.isEmpty ? nil : String($0.prefix(60)) }
+                ?? "New chat"
+            return HermesSession(id: id, title: title, lastActive: r["last_active"].double,
+                                 profile: r["profile"].text ?? profile, model: r["model"].text)
+        }
+    }
+
+    func messages(for key: String, profile requestedProfile: String?) async throws -> [HermesMessage] {
         try await ensureSignedIn()
         let json = try await getJSON("api/sessions/\(key)/messages", query: [
-            "profile": profile, "order": "latest", "limit": "100", "offset": "0", "include_compacted": "true"
+            "profile": requestedProfile ?? profile, "order": "latest", "limit": "100", "offset": "0", "include_compacted": "true"
         ])
         var rows = json["messages"].list ?? []
         // `order=latest` pages newest first; show oldest first.
@@ -214,6 +289,7 @@ final class HermesClient {
             for index in messages.indices where messages[index].role == "assistant" {
                 messages[index].rate = rates[messages[index].text]
             }
+            messages = LiveChat.restoringModelMarkers(in: messages, from: cached)
         }
         cache.store(messages, for: key, lastActive: sessions.first { $0.id == key }?.lastActive)
         return messages
@@ -248,19 +324,20 @@ final class HermesClient {
     /// a time, so opening any of them is instant.
     private func prefetchRecent() {
         prefetchTask?.cancel()
-        let targets = sessions.prefix(ConversationCache.limit).filter { cache.isStale($0) }.map(\.id)
+        let targets = sessions.prefix(ConversationCache.limit).filter { cache.isStale($0) }
         guard !targets.isEmpty else { return }
         prefetchTask = Task { [weak self] in
-            for key in targets {
+            for row in targets {
                 guard !Task.isCancelled, let self else { return }
-                _ = try? await self.messages(for: key)
+                _ = try? await self.messages(for: row.id, profile: row.profile)
             }
         }
     }
 
-    private func getJSON(_ path: String, query: [String: String] = [:]) async throws -> JSON {
+    private func getJSON(_ path: String, query: [String: String] = [:], timeout: TimeInterval? = nil) async throws -> JSON {
         guard let base = baseURL else { throw HermesError.notConfigured }
         var req = request(base, path, query: query)
+        if let timeout { req.timeoutInterval = timeout }
         let (data, response) = try await authorizedRaw(&req)
         guard (200..<300).contains(response.statusCode) else { throw HermesError.http(response.statusCode, Self.detail(data)) }
         guard let json = JSON.decode(data) else { throw HermesError.unsupported }

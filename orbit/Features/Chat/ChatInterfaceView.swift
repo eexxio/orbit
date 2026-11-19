@@ -214,7 +214,7 @@ struct ChatInterfaceView: View {
                                 Image(systemName: "doc.on.doc")
                             }
                             .accessibilityLabel("Copy reply")
-                            .accessibilityIdentifier("chat.reply.completed", isEnabled: isCompletedReply)
+                            .accessibilityIdentifier(isCompletedReply ? "chat.reply.completed" : "chat.reply.copy")
                         }
 
                         if let rate = message.rate {

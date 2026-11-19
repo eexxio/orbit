@@ -12,27 +12,27 @@ final class ChatStreamingTests: XCTestCase {
 
         let waiting = app.staticTexts["chat.reply.waiting"]
         XCTAssertTrue(waiting.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["chat.stop"].isEnabled)
-        XCTAssertFalse(app.buttons["chat.send"].exists)
+        XCTAssertTrue(button("chat.stop", in: app).isEnabled)
+        XCTAssertFalse(button("chat.send", in: app).exists)
         screenshot("chat-waiting")
         try await advance("complete", to: "delta")
 
         let streaming = app.staticTexts["chat.reply.streaming"]
         XCTAssertTrue(streaming.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["chat.stop"].isEnabled)
-        XCTAssertFalse(app.buttons["chat.send"].exists)
+        XCTAssertTrue(button("chat.stop", in: app).isEnabled)
+        XCTAssertFalse(button("chat.send", in: app).exists)
         XCTAssertTrue(reply(partial, in: app).exists)
         XCTAssertFalse(waiting.exists)
-        XCTAssertFalse(app.buttons["Copy reply"].exists)
-        XCTAssertFalse(app.buttons["chat.reply.completed"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier IN %@", ["chat.reply.copy", "chat.reply.completed"])).firstMatch.exists)
+        XCTAssertFalse(button("chat.reply.completed", in: app).exists)
         screenshot("chat-streaming")
         try await advance("complete", to: "end")
 
         XCTAssertTrue(reply(partial + " and the ending.", in: app).waitForExistence(timeout: 10))
         XCTAssertFalse(reply(partial, in: app).exists)
         XCTAssertTrue(streaming.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Copy reply"].exists)
-        XCTAssertTrue(app.buttons["chat.reply.completed"].exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier IN %@", ["chat.reply.copy", "chat.reply.completed"])).firstMatch.exists)
+        XCTAssertTrue(button("chat.reply.completed", in: app).exists)
         screenshot("chat-completed")
     }
 
@@ -56,7 +56,7 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertTrue(reply(partial, in: app).exists)
         XCTAssertFalse(streaming.exists)
         XCTAssertEqual(tool.value as? String, "Tool result not received")
-        XCTAssertFalse(app.buttons["chat.reply.completed"].exists)
+        XCTAssertFalse(button("chat.reply.completed", in: app).exists)
         screenshot("chat-interrupted")
 
         send("Send after reconnecting", in: app)
@@ -75,9 +75,9 @@ final class ChatStreamingTests: XCTestCase {
         let draft = composer(in: app)
         draft.tap()
         draft.typeText("My next message")
-        let sendButton = app.buttons["chat.send"]
+        let sendButton = button("chat.send", in: app)
         XCTAssertFalse(sendButton.exists)
-        XCTAssertTrue(app.buttons["chat.stop"].isEnabled)
+        XCTAssertTrue(button("chat.stop", in: app).isEnabled)
         try await advance("failure", to: "end")
 
         XCTAssertTrue(app.staticTexts["chat.reply.failed"].waitForExistence(timeout: 10))
@@ -113,10 +113,10 @@ final class ChatStreamingTests: XCTestCase {
         let app = launchChat()
         send("Stop while waiting", in: app)
         XCTAssertTrue(app.staticTexts["chat.reply.waiting"].waitForExistence(timeout: 10))
-        let stop = app.buttons["chat.stop"]
+        let stop = button("chat.stop", in: app)
         XCTAssertTrue(stop.waitForExistence(timeout: 10))
         XCTAssertTrue(stop.isEnabled)
-        XCTAssertFalse(app.buttons["chat.send"].exists)
+        XCTAssertFalse(button("chat.send", in: app).exists)
         XCTAssertEqual(app.keyboards.count, 0)
         let width = composer(in: app).frame.width
         XCTAssertLessThan(width, 240)
@@ -124,11 +124,11 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["chat.reply.stopped"].waitForExistence(timeout: 10))
         try await advance("stop-waiting", to: "interrupted")
         XCTAssertFalse(app.staticTexts["chat.reply.waiting"].exists)
-        XCTAssertFalse(app.buttons["Copy reply"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier IN %@", ["chat.reply.copy", "chat.reply.completed"])).firstMatch.exists)
         XCTAssertFalse(reply(partial, in: app).exists)
         XCTAssertEqual(app.keyboards.count, 0)
         XCTAssertEqual(composer(in: app).frame.width, width, accuracy: 1)
-        XCTAssertFalse(app.buttons["chat.send"].isEnabled)
+        XCTAssertFalse(button("chat.send", in: app).isEnabled)
         screenshot("stop-waiting")
         send("Send after reconnecting", in: app)
         XCTAssertTrue(reply("The next reply arrived.", in: app).waitForExistence(timeout: 10))
@@ -140,30 +140,30 @@ final class ChatStreamingTests: XCTestCase {
         send(prompt, in: app)
         try await advance(scenario, to: "delta")
         XCTAssertTrue(app.staticTexts["chat.reply.streaming"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["chat.stop"].isEnabled)
-        XCTAssertFalse(app.buttons["chat.send"].exists)
+        XCTAssertTrue(button("chat.stop", in: app).isEnabled)
+        XCTAssertFalse(button("chat.send", in: app).exists)
         let before = try await fixtureState()
         let field = composer(in: app)
         field.tap()
         field.typeText("Send the next reply")
-        XCTAssertTrue(app.buttons["chat.stop"].isEnabled)
-        XCTAssertEqual(app.buttons["chat.stop"].label, "Stop reply")
+        XCTAssertTrue(button("chat.stop", in: app).isEnabled)
+        XCTAssertEqual(button("chat.stop", in: app).label, "Stop reply")
         screenshot("stop-streaming-\(scenario)")
-        app.buttons["chat.stop"].tap()
+        button("chat.stop", in: app).tap()
         XCTAssertTrue(app.staticTexts["chat.reply.stopped"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["chat.reply.interrupted"].exists)
         XCTAssertFalse(app.staticTexts["chat.reply.failed"].exists)
         XCTAssertTrue(reply(partial, in: app).exists)
         XCTAssertFalse(app.staticTexts["chat.reply.streaming"].exists)
-        XCTAssertTrue(app.buttons["Copy reply"].exists)
-        XCTAssertFalse(app.buttons["chat.reply.completed"].exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier IN %@", ["chat.reply.copy", "chat.reply.completed"])).firstMatch.exists)
+        XCTAssertFalse(button("chat.reply.completed", in: app).exists)
         XCTAssertEqual(field.value as? String, "Send the next reply")
-        XCTAssertTrue(app.buttons["chat.send"].isEnabled)
+        XCTAssertTrue(button("chat.send", in: app).isEnabled)
         let tool = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@", "get_weather")).firstMatch
         XCTAssertEqual(tool.value as? String, "Tool result not received")
         if scenario == "stop" { screenshot("stop-stopped-\(scenario)") }
-        app.buttons["chat.send"].tap()
+        button("chat.send", in: app).tap()
         try await advance(scenario, to: "interrupted")
         try await advance("next", to: "delta")
         XCTAssertTrue(app.staticTexts["chat.reply.streaming"].waitForExistence(timeout: 10))
@@ -186,10 +186,15 @@ final class ChatStreamingTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-hermes.address", address, "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
-        let newChat = app.buttons["chats.new"]
+        let newChat = button("chats.new", in: app)
         XCTAssertTrue(newChat.waitForExistence(timeout: 10))
         newChat.tap()
         return app
+    }
+
+    @MainActor
+    private func button(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier == %@", identifier)).firstMatch
     }
 
     @MainActor
@@ -203,7 +208,7 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 10))
         field.tap()
         field.typeText(text)
-        let button = app.buttons["chat.send"]
+        let button = button("chat.send", in: app)
         XCTAssertEqual(field.value as? String, text)
         XCTAssertTrue(button.isEnabled)
         button.tap()

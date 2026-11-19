@@ -18,6 +18,7 @@ struct ChatInterfaceView: View {
     @AppStorage(AppearanceKey.showToolCalls) private var showToolCalls = true
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .subheadline) private var replyActionGlyphSize = 18.0
     @State private var chat: LiveChat
     @State private var dictation = ComposerDictation()
     @State private var speech = ReplySpeaker.shared
@@ -258,6 +259,9 @@ struct ChatInterfaceView: View {
                                 UIPasteboard.general.string = copyText
                             } label: {
                                 Image(systemName: "doc.on.doc")
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: replyActionGlyphSize, height: replyActionGlyphSize)
                                     .frame(width: 44, height: 44)
                                     .contentShape(.rect)
                             }
@@ -278,6 +282,13 @@ struct ChatInterfaceView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 }
+
+                if speech.failedID == message.id {
+                    Label("Couldn’t read this reply aloud.", systemImage: "exclamationmark.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("chat.reply.speak.error")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -294,10 +305,12 @@ struct ChatInterfaceView: View {
             speechTap += 1
         } label: {
             Image(systemName: isSpeaking ? "speaker.wave.2.fill" : "speaker.wave.2")
+                .resizable()
+                .scaledToFit()
                 .symbolEffect(.pulse.wholeSymbol, isActive: isSpeaking && !reduceMotion)
-                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                 .foregroundStyle(dictation.isBusy ? AnyShapeStyle(.tertiary)
                                  : isSpeaking ? AnyShapeStyle(accent.color) : AnyShapeStyle(.secondary))
+                .frame(width: replyActionGlyphSize, height: replyActionGlyphSize)
                 .frame(width: 44, height: 44)
                 .contentShape(.rect)
         }

@@ -50,6 +50,31 @@ final class VoiceInputTests: XCTestCase {
     }
 
     @MainActor
+    func testReadAloudFailureShowsAnInlineNotice() {
+        let app = launch(failReadAloud: true)
+        let newChat = app.buttons["chats.new"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 10))
+        newChat.tap()
+
+        let draft = app.descendants(matching: .any)["chat.composer"].firstMatch
+        XCTAssertTrue(draft.waitForExistence(timeout: 5))
+        draft.tap()
+        draft.typeText("Send after reconnecting")
+        app.buttons["chat.send"].tap()
+
+        let speak = app.buttons["chat.reply.speak"]
+        XCTAssertTrue(speak.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["chat.reply.speak.error"].exists)
+        speak.tap()
+
+        let notice = app.staticTexts["chat.reply.speak.error"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        XCTAssertEqual(notice.label, "Couldn’t read this reply aloud.")
+        XCTAssertEqual(speak.label, "Read reply aloud")
+        screenshot("voice-reply-reading-error")
+    }
+
+    @MainActor
     func testUnknownReadAloudPreferenceShowsOff() {
         let app = launch(readAloud: "unrecognized-mode")
         XCTAssertEqual(readAloudPicker(in: app).value as? String, "Off")
@@ -75,12 +100,13 @@ final class VoiceInputTests: XCTestCase {
     }
 
     @MainActor
-    private func launch(readAloud: String? = nil) -> XCUIApplication {
+    private func launch(readAloud: String? = nil, failReadAloud: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = [
             "-hermes.address", address, "-AppleLanguages", "(en)", "-AppleLocale", "en_US",
-            "-orbitFakeDictation", "after reconnecting", "-orbitFakeReadAloud",
+            "-orbitFakeDictation", "after reconnecting",
+            failReadAloud ? "-orbitFailReadAloud" : "-orbitFakeReadAloud",
         ]
         if let readAloud { app.launchArguments += ["-hermes.readAloud", readAloud] }
         app.launch()

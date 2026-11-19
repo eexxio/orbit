@@ -6,7 +6,9 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
     static let shared = ReplySpeaker()
 
     private(set) var speakingID: UUID?
+    private(set) var failedID: UUID?
     private var utteranceID: ObjectIdentifier?
+    private var didStartUtterance = false
     private let synthesizer = AVSpeechSynthesizer()
 
     private override init() {
@@ -16,9 +18,15 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
 
     func start(id: UUID, text: String) {
         stop()
+        failedID = nil
         let text = ReplySpeechText.render(text)
         guard !text.isEmpty else { return }
         #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("-orbitFailReadAloud") {
+            speakingID = id
+            failPlayback(id)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("-orbitFakeReadAloud") {
             speakingID = id
             return
@@ -29,7 +37,10 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
             try session.setCategory(.playback, mode: .spokenAudio,
                                     options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
             try session.setActive(true)
-        } catch { return }
+        } catch {
+            failPlayback(id)
+            return
+        }
 
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
@@ -43,6 +54,7 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
         guard speakingID != nil else { return }
         let realSpeech = utteranceID != nil
         utteranceID = nil
+        didStartUtterance = false
         speakingID = nil
         if realSpeech {
             synthesizer.stopSpeaking(at: .immediate)
@@ -50,17 +62,34 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
         }
     }
 
+    private func failPlayback(_ id: UUID) {
+        stop()
+        failedID = id
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in
+            if utteranceID == id { didStartUtterance = true }
+        }
+    }
+
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        didEnd(ObjectIdentifier(utterance))
+        didEnd(ObjectIdentifier(utterance), cancelled: false)
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        didEnd(ObjectIdentifier(utterance))
+        didEnd(ObjectIdentifier(utterance), cancelled: true)
     }
 
-    nonisolated private func didEnd(_ id: ObjectIdentifier) {
+    nonisolated private func didEnd(_ id: ObjectIdentifier, cancelled: Bool) {
         Task { @MainActor in
-            if utteranceID == id { stop() }
+            guard utteranceID == id, let speakingID else { return }
+            if cancelled || !didStartUtterance {
+                failPlayback(speakingID)
+            } else {
+                stop()
+            }
         }
     }
 }

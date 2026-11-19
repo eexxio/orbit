@@ -50,8 +50,8 @@ final class VoiceInputTests: XCTestCase {
     }
 
     @MainActor
-    func testReadAloudFailureShowsAnInlineNotice() {
-        let app = launch(failReadAloud: true)
+    func testStalledReadAloudResetsButtonAndShowsAnInlineNotice() {
+        let app = launch(stallReadAloud: true)
         let newChat = app.buttons["chats.new"]
         XCTAssertTrue(newChat.waitForExistence(timeout: 10))
         newChat.tap()
@@ -66,9 +66,10 @@ final class VoiceInputTests: XCTestCase {
         XCTAssertTrue(speak.waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["chat.reply.speak.error"].exists)
         speak.tap()
+        XCTAssertEqual(speak.label, "Stop reading")
 
         let notice = app.staticTexts["chat.reply.speak.error"]
-        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        XCTAssertTrue(notice.waitForExistence(timeout: 8))
         XCTAssertEqual(notice.label, "Couldn’t read this reply aloud.")
         XCTAssertEqual(speak.label, "Read reply aloud")
         screenshot("voice-reply-reading-error")
@@ -100,13 +101,13 @@ final class VoiceInputTests: XCTestCase {
     }
 
     @MainActor
-    private func launch(readAloud: String? = nil, failReadAloud: Bool = false) -> XCUIApplication {
+    private func launch(readAloud: String? = nil, stallReadAloud: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = [
             "-hermes.address", address, "-AppleLanguages", "(en)", "-AppleLocale", "en_US",
             "-orbitFakeDictation", "after reconnecting",
-            failReadAloud ? "-orbitFailReadAloud" : "-orbitFakeReadAloud",
+            stallReadAloud ? "-orbitStallReadAloud" : "-orbitFakeReadAloud",
         ]
         if let readAloud { app.launchArguments += ["-hermes.readAloud", readAloud] }
         app.launch()

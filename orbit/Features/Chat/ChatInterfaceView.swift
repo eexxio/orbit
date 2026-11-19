@@ -40,6 +40,7 @@ struct ChatInterfaceView: View {
                 composer
             }
         }
+        .navigationTitle(chatTitle)
         .sheet(isPresented: toolPresentation(inspector: false)) {
             toolDetails(wide: false)
         }
@@ -54,6 +55,10 @@ struct ChatInterfaceView: View {
         .onAppear { chat.isOnScreen = true }
         // Only lets the chat go if no turn is running; otherwise it finishes in the background.
         .onDisappear { chat.isOnScreen = false }
+    }
+
+    private var chatTitle: String {
+        HermesClient.shared.sessions.first { $0.id == chat.key }?.title ?? "New chat"
     }
 
     private var usesToolInspector: Bool {

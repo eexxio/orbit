@@ -46,95 +46,117 @@ struct ToolCallDetailsView: View {
     var body: some View {
         let current = chat.messages.first { $0.id == message.id }
         let displayed = current ?? lastMessage ?? message
-        NavigationStack {
+        Group {
             if let tool = displayed.tool {
                 let status = ToolCallStatus(tool: tool, isLive: chat.liveToolIDs.contains(message.id))
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        header(tool, status: status)
-                        timing(tool)
-                        ToolPayloadBlock(title: "Input", id: "input", raw: tool.arguments,
-                                         placeholder: inputPlaceholder(status, cached: displayed.isToolPreview),
-                                         waiting: displayed.isToolPreview && chat.isRefreshingHistory,
-                                         wide: wide, wraps: wrapsLines || dynamicTypeSize.isAccessibilitySize)
-                        if let diff = tool.diff, !diff.isEmpty {
-                            ToolPayloadBlock(title: "Changes", id: "diff", raw: diff, placeholder: "",
-                                             wide: wide, wraps: wrapsLines || dynamicTypeSize.isAccessibilitySize)
+                if wide {
+                    VStack(spacing: 0) {
+                        HStack(spacing: 16) {
+                            title(tool)
+                            Spacer(minLength: 0)
+                            actions(tool)
+                            done
                         }
-                        if status == .failed, let error = tool.errorMessage {
-                            Label {
-                                Text(error).lineLimit(3)
-                            } icon: {
-                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        Divider()
+                        details(tool, status: status, displayed: displayed, missing: current == nil)
+                    }
+                } else {
+                    NavigationStack {
+                        details(tool, status: status, displayed: displayed, missing: current == nil)
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement: .principal) { title(tool) }
+                                ToolbarItem(placement: .confirmationAction) { done }
+                                ToolbarItem(placement: .topBarTrailing) { actions(tool) }
                             }
-                            .font(.subheadline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                            .background(.red.opacity(0.10), in: .rect(cornerRadius: 12))
-                        }
-                        ToolPayloadBlock(title: "Output", id: "output", raw: tool.output,
-                                         placeholder: outputPlaceholder(status, cached: displayed.isToolPreview),
-                                         waiting: status == .running || (displayed.isToolPreview && chat.isRefreshingHistory),
-                                         wide: wide, wraps: wrapsLines || dynamicTypeSize.isAccessibilitySize)
-                        if tool.outputLimitedByServer == true {
-                            Text("Hermes shortened this live output. Reload the chat to see the stored result.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                        if status == .unavailable || displayed.isToolPreview || tool.outputLimitedByServer == true {
-                            if connected && !chat.isGenerating && !chat.isRefreshingHistory {
-                                Button("Reload Chat", systemImage: "arrow.clockwise") {
-                                    Task { await chat.refreshHistory() }
-                                }
-                                .frame(minHeight: 44)
-                                .accessibilityIdentifier("tool.details.reload")
-                            }
-                        }
-                        if current == nil {
-                            Text("This call is no longer in the chat.").font(.footnote).foregroundStyle(.secondary)
-                        }
                     }
-                    .padding(.horizontal, wide ? 24 : 20)
-                    .padding(.top, 8)
-                    .padding(.bottom, 24)
-                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: status)
-                }
-                .accessibilityIdentifier("tool.details")
-                .navigationTitle(tool.name)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .principal) {
-                        Text(tool.name)
-                            .font(.headline.monospaced())
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .accessibilityAddTraits(.isHeader)
-                            .accessibilityIdentifier("tool.details.name")
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done", action: close)
-                            .keyboardShortcut(.cancelAction)
-                            .accessibilityIdentifier("tool.details.done")
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        actions(tool)
-                    }
-                }
-                .sensoryFeedback(trigger: status) { old, new in
-                    guard old == .running else { return nil }
-                    switch new {
-                    case .completed: return .success
-                    case .failed: return .error
-                    default: return nil
-                    }
+                    .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium, .large], selection: $detent)
+                    .presentationDragIndicator(.visible)
+                    .presentationContentInteraction(.scrolls)
+                    .onAppear { detent = dynamicTypeSize.isAccessibilitySize ? .large : .medium }
                 }
             }
         }
-        .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium, .large], selection: $detent)
-        .presentationDragIndicator(.visible)
-        .presentationContentInteraction(.scrolls)
-        .onAppear { detent = dynamicTypeSize.isAccessibilitySize ? .large : .medium }
         .onChange(of: current?.item, initial: true) { if let current { lastMessage = current } }
+    }
+
+    private func title(_ tool: HermesToolCall) -> some View {
+        Text(tool.name)
+            .font(.headline.monospaced())
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("tool.details.name")
+    }
+
+    private var done: some View {
+        Button("Done", action: close)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityIdentifier("tool.details.done")
+    }
+
+    private func details(_ tool: HermesToolCall, status: ToolCallStatus, displayed: ChatMessage, missing: Bool) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                header(tool, status: status)
+                timing(tool)
+                ToolPayloadBlock(title: "Input", id: "input", raw: tool.arguments,
+                                 placeholder: inputPlaceholder(status, cached: displayed.isToolPreview),
+                                 waiting: displayed.isToolPreview && chat.isRefreshingHistory,
+                                 wide: wide, wraps: wrapsLines || dynamicTypeSize.isAccessibilitySize)
+                if let diff = tool.diff, !diff.isEmpty {
+                    ToolPayloadBlock(title: "Changes", id: "diff", raw: diff, placeholder: "",
+                                     wide: wide, wraps: wrapsLines || dynamicTypeSize.isAccessibilitySize)
+                }
+                if status == .failed, let error = tool.errorMessage {
+                    Label {
+                        Text(error).lineLimit(3)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                    }
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(.red.opacity(0.10), in: .rect(cornerRadius: 12))
+                }
+                ToolPayloadBlock(title: "Output", id: "output", raw: tool.output,
+                                 placeholder: outputPlaceholder(status, cached: displayed.isToolPreview),
+                                 waiting: status == .running || (displayed.isToolPreview && chat.isRefreshingHistory),
+                                 wide: wide, wraps: wrapsLines || dynamicTypeSize.isAccessibilitySize)
+                if tool.outputLimitedByServer == true {
+                    Text("Hermes shortened this live output. Reload the chat to see the stored result.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if status == .unavailable || displayed.isToolPreview || tool.outputLimitedByServer == true {
+                    if connected && !chat.isGenerating && !chat.isRefreshingHistory {
+                        Button("Reload Chat", systemImage: "arrow.clockwise") {
+                            Task { await chat.refreshHistory() }
+                        }
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("tool.details.reload")
+                    }
+                }
+                if missing {
+                    Text("This call is no longer in the chat.").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, wide ? 24 : 20)
+            .padding(.top, 8)
+            .padding(.bottom, 24)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: status)
+        }
+        .accessibilityIdentifier("tool.details")
+        .sensoryFeedback(trigger: status) { old, new in
+            guard old == .running else { return nil }
+            switch new {
+            case .completed: return .success
+            case .failed: return .error
+            default: return nil
+            }
+        }
     }
 
     private func header(_ tool: HermesToolCall, status: ToolCallStatus) -> some View {
@@ -173,8 +195,11 @@ struct ToolCallDetailsView: View {
 
     @ViewBuilder private func timing(_ tool: HermesToolCall) -> some View {
         let dates: [(String, Date?)] = [("Called", tool.calledAt), ("Finished", tool.finishedAt)]
+        let savedDuration = tool.calledAt.flatMap { called in
+            tool.finishedAt.map { $0.timeIntervalSince(called) }.flatMap { $0 >= 0 ? $0 : nil }
+        }
         let values = dates.compactMap { label, date in date.map { (label, timeText($0)) } }
-            + (tool.duration.map { [("Duration", durationText($0))] } ?? [])
+            + ((tool.duration ?? savedDuration).map { [("Duration", durationText($0))] } ?? [])
         if !values.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 ToolSectionTitle("Timing")
@@ -197,6 +222,11 @@ struct ToolCallDetailsView: View {
                 }
                 .font(.subheadline)
                 .accessibilityIdentifier("tool.details.timing")
+                if tool.duration == nil && savedDuration != nil {
+                    Text("From saved transcript timestamps.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }

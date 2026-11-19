@@ -14,7 +14,7 @@ final class ToolCallDetailsTests: XCTestCase {
         XCTAssertEqual(detail("status", in: app).label, "Running")
         XCTAssertFalse(detail("timing", in: app).exists)
         XCTAssertTrue(payload("input", in: app).contains("PROJECT.md"))
-        XCTAssertTrue(detail("output", in: app).label.contains("Waiting for output"))
+        XCTAssertTrue(payload("output", in: app).contains("Waiting for output"))
         screenshot("tool-running")
 
         try await advance("tool-short", phase: "end")
@@ -22,7 +22,9 @@ final class ToolCallDetailsTests: XCTestCase {
         let completed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "Completed"), object: status)
         await fulfillment(of: [completed], timeout: 10)
         XCTAssertTrue(status.label.contains("0.42"))
-        XCTAssertTrue(app.staticTexts["0.42 s"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Duration", "0.42 s"))
+            .firstMatch.exists)
         XCTAssertFalse(app.staticTexts["Started"].exists)
         XCTAssertFalse(app.staticTexts["Finished"].exists)
         XCTAssertTrue(payload("output", in: app).contains("Release checklist"))
@@ -40,9 +42,8 @@ final class ToolCallDetailsTests: XCTestCase {
         open(in: app)
         XCTAssertTrue(payload("output", in: app).contains("0001 | Asset catalog check passed"))
         screenshot("tool-long-output")
-        let scroll = app.scrollViews["tool.details"]
         let showAll = app.buttons["tool.details.showAll"]
-        for _ in 0..<4 where !showAll.isHittable { scroll.swipeUp() }
+        reveal(showAll, in: app)
         XCTAssertTrue(showAll.label.contains("3201"))
         showAll.tap()
         XCTAssertTrue(app.buttons["tool.details.copy.output"].exists)
@@ -71,12 +72,15 @@ final class ToolCallDetailsTests: XCTestCase {
         open(in: app)
         XCTAssertTrue(payload("input", in: app).contains("NOTES.md"))
         XCTAssertTrue(payload("output", in: app).contains("Archived notes"))
-        XCTAssertFalse(app.staticTexts["Duration"].exists)
+        XCTAssertTrue(app.staticTexts["From saved transcript timestamps."].exists)
         if UIDevice.current.userInterfaceIdiom != .pad {
             app.buttons["tool.details.done"].tap()
         }
         open(in: app, index: 1)
         XCTAssertEqual(payload("output", in: app), "Readme result")
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertTrue(app.navigationBars.staticTexts["Saved tool calls"].exists)
+        }
     }
 
     private func launch(_ address: String) -> XCUIApplication {
@@ -107,12 +111,16 @@ final class ToolCallDetailsTests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         row.tap()
         XCTAssertTrue(detail("name", in: app).waitForExistence(timeout: 5))
-        if UIDevice.current.userInterfaceIdiom != .pad {
-            let title = detail("name", in: app)
-            let handle = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0))
-                .withOffset(CGVector(dx: 0, dy: -14))
-            handle.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)))
+    }
+
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        let scroll = app.scrollViews["tool.details"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        for _ in 0..<5 {
+            if element.isHittable { return }
+            scroll.swipeUp()
         }
+        XCTAssertTrue(element.isHittable)
     }
 
     private func detail(_ name: String, in app: XCUIApplication) -> XCUIElement {
@@ -122,7 +130,7 @@ final class ToolCallDetailsTests: XCTestCase {
 
     private func payload(_ name: String, in app: XCUIApplication) -> String {
         let element = detail(name, in: app)
-        XCTAssertTrue(element.waitForExistence(timeout: 5))
+        if !element.waitForExistence(timeout: 2) { reveal(element, in: app) }
         return element.value as? String ?? element.label
     }
 

@@ -32,7 +32,7 @@ extension ChatInterfaceView {
                                  copy: { copyMessage(target.text) },
                                  select: { selectedText = SelectedMessageText(text: message.text) },
                                  share: { sharedText = SelectedMessageText(text: target.text) },
-                                 regenerate: { requestReplacement(nil) }, edit: { beginEditing(message) })
+                                 regenerate: { requestReplacement(nil, anchorID: message.id) }, edit: { beginEditing(message) })
     }
 
     var editBanner: some View {
@@ -89,9 +89,22 @@ extension ChatInterfaceView {
         return row >= start
     }
 
-    func requestReplacement(_ text: String?) {
+    func replacementConfirmation(for anchorID: UUID?) -> MessageReplacementConfirmation {
+        let presented = Binding {
+            confirmsReplacement && confirmationMessageID == anchorID
+        } set: { presented in
+            guard confirmationMessageID == anchorID else { return }
+            confirmsReplacement = presented
+        }
+        return MessageReplacementConfirmation(isPresented: presented, toolCount: chat.lastReplyToolCount,
+                                              regenerate: { performReplacement() }, cancel: { pendingReplacement = nil })
+    }
+
+    func requestReplacement(_ text: String?, anchorID: UUID? = nil) {
         guard chat.isIdle, chat.canRewind else { return }
         pendingReplacement = text
+        confirmationMessageID = anchorID ?? chat.messages.reversed().prefix(while: { !$0.isUser })
+            .first(where: { $0.role == "assistant" })?.id
         if chat.lastReplyToolCount > 0 { confirmsReplacement = true }
         else { performReplacement() }
     }

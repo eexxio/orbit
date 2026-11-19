@@ -26,6 +26,7 @@ struct ChatInterfaceView: View {
     @State var sharedText: SelectedMessageText?
     @State var pendingReplacement: String?
     @State var confirmsReplacement = false
+    @State var confirmationMessageID: UUID?
     @State var copyCount = 0
     @State var rowWidth: CGFloat = 320
     @State private var stopCount = 0
@@ -63,12 +64,6 @@ struct ChatInterfaceView: View {
         .onChange(of: chat.isIdle) { validateEditing() }
         .sheet(item: $selectedText) { SelectMessageTextSheet(text: $0.text) }
         .sheet(item: $sharedText) { MessageShareSheet(text: $0.text) }
-        .confirmationDialog("Run this turn again?", isPresented: $confirmsReplacement, titleVisibility: .visible) {
-            Button("Regenerate") { performReplacement() }
-            Button("Cancel", role: .cancel) { pendingReplacement = nil }
-        } message: {
-            Text("This reply ran \(chat.lastReplyToolCount) tool(s). Running it again may repeat what they did.")
-        }
         .sensoryFeedback(.success, trigger: copyCount)
         .sensoryFeedback(.impact(weight: .light), trigger: chat.rewindCount)
         .sensoryFeedback(.error, trigger: chat.rewindFailureCount)
@@ -244,6 +239,7 @@ struct ChatInterfaceView: View {
                     .accessibilityIdentifier("chat.message.reply")
                     .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20))
                     .modifier(actions(for: .reply(segment: message, replyText: replyText(for: message))))
+                    .modifier(replacementConfirmation(for: message.id))
 
                 if copyText != nil || message.rate != nil {
                     HStack(spacing: 20) {
@@ -317,7 +313,7 @@ struct ChatInterfaceView: View {
         .frame(maxWidth: composerIsCollapsed ? 240 : .infinity)
         .contentShape(.rect)
         .onTapGesture { composerIsFocused = true }
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
         .animation(.spring(duration: 0.4, bounce: 0.2), value: composerIsCollapsed)
@@ -419,6 +415,7 @@ struct ChatInterfaceView: View {
               .accessibilityIdentifier("chat.reply.retry")
           }
         }
+        .modifier(replacementConfirmation(for: nil))
     }
 
     /// Something is on its way but no row shows it yet. A running tool row has its own spinner.

@@ -54,6 +54,22 @@ struct MessageActions: View {
     }
 }
 
+struct MessageReplacementConfirmation: ViewModifier {
+    @Binding var isPresented: Bool
+    let toolCount: Int
+    let regenerate: () -> Void
+    let cancel: () -> Void
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog("Run this turn again?", isPresented: $isPresented, titleVisibility: .visible) {
+            Button("Regenerate", action: regenerate)
+            Button("Cancel", role: .cancel, action: cancel)
+        } message: {
+            Text("This reply ran \(toolCount) tool(s). Running it again may repeat what they did.")
+        }
+    }
+}
+
 struct ReplyPreview: View {
     let text: String
     let width: CGFloat

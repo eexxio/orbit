@@ -36,6 +36,7 @@ struct MessageAttachmentsView: View {
                     .font(.subheadline).padding(.horizontal, 12).padding(.vertical, 8)
                     .background(Color.secondary.opacity(0.12), in: .rect(cornerRadius: 14))
                     .contextMenu { Button("Copy Name") { UIPasteboard.general.string = ref.name } }
+                    .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(ref.kind == "image" ? "Photo" : "File") you sent, \(ref.name)")
                     .accessibilityIdentifier("chat.message.attachment")
             }

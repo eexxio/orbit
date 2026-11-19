@@ -19,6 +19,7 @@ struct ChatInterfaceView: View {
     @State private var scrollPosition = ScrollPosition()
     @State private var draft = ""
     @State private var stopCount = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @FocusState private var composerIsFocused: Bool
 
@@ -113,9 +114,12 @@ struct ChatInterfaceView: View {
                         messageRow(message, copyText: copies[message.id], isCompletedReply: message.id == completedID)
                     }
 
-                    replyStatus
-                        .transition(.opacity)
-                        .animation(.default, value: chat.replyState)
+                    ZStack(alignment: .leading) {
+                        replyStatus
+                            .id(chat.replyState == .stopped)
+                            .transition(reduceMotion ? .identity : .opacity)
+                    }
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: chat.replyState)
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 8)
@@ -184,6 +188,7 @@ struct ChatInterfaceView: View {
             ReasoningRow(text: message.text, isLive: message.id == chat.reasoningID)
         } else if let tool = message.tool {
             ToolCallRow(tool: tool, isLive: chat.liveToolIDs.contains(message.id))
+                .accessibilityIdentifier("chat.tool.\(tool.id)")
         } else if message.isUser {
             HStack {
                 Spacer(minLength: 48)
@@ -205,7 +210,8 @@ struct ChatInterfaceView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                if copyText != nil || message.rate != nil {
+                let reservesCopy = chat.isGenerating && message.id == chat.messages.last(where: { $0.role == "assistant" && $0.tool == nil })?.id
+                if copyText != nil || message.rate != nil || reservesCopy {
                     HStack(spacing: 20) {
                         if let copyText {
                             Button {
@@ -215,6 +221,10 @@ struct ChatInterfaceView: View {
                             }
                             .accessibilityLabel("Copy reply")
                             .accessibilityIdentifier(isCompletedReply ? "chat.reply.completed" : "chat.reply.copy")
+                        } else if reservesCopy {
+                            Image(systemName: "doc.on.doc")
+                                .hidden()
+                                .accessibilityHidden(true)
                         }
 
                         if let rate = message.rate {

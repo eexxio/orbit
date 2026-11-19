@@ -186,11 +186,20 @@ final class ChatStreamingTests: XCTestCase {
         field.typeText("Send the next reply")
         XCTAssertTrue(button("chat.stop", in: app).isEnabled)
         XCTAssertEqual(button("chat.stop", in: app).label, "Stop reply")
+        let streaming = app.staticTexts.matching(NSPredicate(format: "identifier == %@", "chat.reply.streaming")).firstMatch
+        let toolChip = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@", "chat.tool.weather")).firstMatch
+        XCTAssertTrue(toolChip.waitForExistence(timeout: 5))
+        XCTAssertFalse(button("chat.reply.copy", in: app).exists)
+        let footerY = streaming.frame.minY
+        let toolY = toolChip.frame.minY
         screenshot("stop-streaming-\(scenario)")
         button("chat.stop", in: app).tap()
         XCTAssertTrue(app.staticTexts["chat.reply.stopped"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["chat.reply.interrupted"].exists)
         XCTAssertFalse(app.staticTexts["chat.reply.failed"].exists)
+        let stopped = app.staticTexts.matching(NSPredicate(format: "identifier == %@", "chat.reply.stopped")).firstMatch
+        XCTAssertEqual(stopped.frame.minY, footerY, accuracy: 1)
+        XCTAssertEqual(toolChip.frame.minY, toolY, accuracy: 1)
         XCTAssertTrue(reply(partial, in: app).exists)
         XCTAssertFalse(app.staticTexts["chat.reply.streaming"].exists)
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier IN %@", ["chat.reply.copy", "chat.reply.completed"])).firstMatch.exists)

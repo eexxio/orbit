@@ -6,7 +6,7 @@ final class HermesConversation {
     /// The stored session key, once the host has one.
     private(set) var storedKey: String?
     private var runtimeID: String?
-    private var executionGeneration: JSON = .null
+    private var acceptsReplyEvents = true
     private var socket: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
     private var heartbeat: Task<Void, Never>?
@@ -37,7 +37,6 @@ final class HermesConversation {
         reader = nil; heartbeat = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil; runtimeID = nil
-        executionGeneration = .null
         failPending(HermesError.socketClosed)
     }
 
@@ -45,23 +44,19 @@ final class HermesConversation {
     func send(_ text: String) async throws {
         if socket == nil || runtimeID == nil { try await open() }
         guard let runtimeID else { throw HermesError.unsupported }
+        acceptsReplyEvents = true
         _ = try await call("prompt.submit", ["session_id": .string(runtimeID), "text": .string(text), "queued": .bool(true)])
     }
 
-    func interrupt() {
-        guard let runtimeID, let task = socket else { close(); return }
-        nextID += 1
-        var params: [String: JSON] = ["session_id": .string(runtimeID)]
-        if executionGeneration != .null { params["execution_generation"] = executionGeneration }
-        let frame: JSON = .object(["jsonrpc": .string("2.0"), "id": .number(Double(nextID)),
-                                   "method": .string("session.interrupt"),
-                                   "params": .object(params)])
-        // Retire this reader before another turn can start: a late final belongs to this turn.
-        task.send(.string(String(decoding: frame.encoded(), as: UTF8.self))) { _ in
-            task.cancel(with: .goingAway, reason: nil)
+    func interrupt(timeout: Duration) async -> Bool {
+        acceptsReplyEvents = false
+        guard let runtimeID else { return false }
+        do {
+            _ = try await call("session.interrupt", ["session_id": .string(runtimeID)], timeout: timeout)
+            return true
+        } catch {
+            return false
         }
-        socket = nil
-        close()
     }
 
     private func open() async throws {
@@ -100,14 +95,22 @@ final class HermesConversation {
         }
     }
 
-    private func call(_ method: String, _ params: [String: JSON]) async throws -> JSON {
+    private func call(_ method: String, _ params: [String: JSON], timeout: Duration? = nil) async throws -> JSON {
         guard let socket else { throw HermesError.socketClosed }
         nextID += 1
         let id = nextID
         let frame: JSON = .object(["jsonrpc": .string("2.0"), "id": .number(Double(id)),
                                    "method": .string(method), "params": .object(params)])
+        var timer: Task<Void, Never>?
+        defer { timer?.cancel() }
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
+            if let timeout {
+                timer = Task { [weak self] in
+                    do { try await Task.sleep(for: timeout) } catch { return }
+                    self?.pending.removeValue(forKey: id)?.resume(throwing: HermesError.socketClosed)
+                }
+            }
             let data = String(decoding: frame.encoded(), as: UTF8.self)
             socket.send(.string(data)) { [weak self] error in
                 guard let error else { return }
@@ -127,7 +130,7 @@ final class HermesConversation {
             } catch {
                 guard let self, self.socket === task else { return }
                 self.close()
-                self.onDisconnect?()
+                if self.acceptsReplyEvents { self.onDisconnect?() }
             }
         }
     }
@@ -164,7 +167,7 @@ final class HermesConversation {
 
     private func apply(_ event: JSON) {
         if let session = event["session_id"].text, let runtimeID, session != runtimeID { return }
-        if event["execution_generation"] != .null { executionGeneration = event["execution_generation"] }
+        guard acceptsReplyEvents || ["session.info", "session.title"].contains(event["type"].text ?? "") else { return }
         let payload = event["payload"]
         switch event["type"].text ?? "" {
         case "message.delta":

@@ -6,6 +6,8 @@ struct ChatRow: View {
     let now: Date
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var restingLeading: CGFloat?
+    @State private var swipeInset: CGFloat = 0
 
     var body: some View {
         Group {
@@ -22,9 +24,17 @@ struct ChatRow: View {
                     }
                     Text(chat.title).lineLimit(1).truncationMode(.tail).layoutPriority(1)
                     Spacer(minLength: 8)
-                    metadata
+                    if swipeInset == 0 { metadata }
                 }
             }
+        }
+        .padding(.leading, swipeInset)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.frame(in: .named("chatList")).minX
+        } action: { leading in
+            if let restingLeading { swipeInset = max(0, restingLeading - leading) }
+            else { restingLeading = leading }
         }
         .font(.body).foregroundStyle(.primary)
         .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: isReplying)
@@ -37,18 +47,22 @@ struct ChatRow: View {
     @ViewBuilder private var metadata: some View {
         Group {
             if isReplying { Text("Replying").accessibilityIdentifier("chats.row.\(chat.id).replying") }
-            else if let timestamp = chat.lastActive {
-                Text(RelativeChatTime.short(Date(timeIntervalSince1970: timestamp), now: now))
+            else if let date = activityDate {
+                Text(RelativeChatTime.short(date, now: now))
             }
         }.font(.subheadline.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
+    }
+
+    private var activityDate: Date? {
+        chat.lastActive.map { min(Date(timeIntervalSince1970: $0), now) }
     }
 
     private var accessibilityValue: String {
         var value = ""
         if isReplying { value = "Replying" }
-        else if let timestamp = chat.lastActive {
-            let date = Date(timeIntervalSince1970: timestamp)
-            if now.timeIntervalSince(date) < 7 * 86400 {
+        else if let date = activityDate {
+            if now.timeIntervalSince(date) < 60 { value = String(localized: "now") }
+            else if now.timeIntervalSince(date) < 7 * 86400 {
                 let formatter = RelativeDateTimeFormatter()
                 formatter.unitsStyle = .full
                 value = formatter.localizedString(for: date, relativeTo: now)

@@ -38,13 +38,11 @@ struct ContentView: View {
                             else { Section("Recent") { rows(recent, now: context.date) } }
                         }
                     }
+                    .coordinateSpace(name: "chatList")
                     .animation(.default, value: filtered)
-                    .overlay {
-                        if filtered.isEmpty {
-                            emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .background(Color(uiColor: .systemGroupedBackground))
-                        }
-                    }
+                    .scrollContentBackground(.hidden)
+                    .background(Color(uiColor: .systemGroupedBackground))
+                    .overlay { if filtered.isEmpty { emptyState } }
                     .refreshable { await client.refreshSessions() }
                 }
             }

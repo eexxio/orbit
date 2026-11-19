@@ -100,6 +100,9 @@ final class ChatListTests: XCTestCase {
         let ended = NSPredicate(format: "NOT (value CONTAINS %@)", "Replying")
         let finished = expectation(for: ended, evaluatedWith: recent)
         await fulfillment(of: [finished], timeout: 10)
+        let completedValue = recent.value as? String ?? ""
+        XCTAssertTrue(completedValue.contains("now"), completedValue)
+        XCTAssertFalse(completedValue.contains("in "), completedValue)
         app.terminate()
         let dark = launch(dark: true)
         XCTAssertTrue(row("fixture", dark).waitForExistence(timeout: 10))
@@ -138,5 +141,28 @@ final class ChatListTests: XCTestCase {
         XCTAssertTrue(app.alerts.staticTexts["Research ideas is still replying. Deleting stops the reply and removes the chat from 127.0.0.1."].exists)
         app.alerts.buttons["Cancel"].tap()
         try await fixture("complete/end")
+    }
+
+    @MainActor func testCompletedReplyUsesPresentAccessibilityTime() async throws {
+        continueAfterFailure = false
+        try await fixture("seed")
+        let app = launch()
+        let recent = row("fixture", app)
+        XCTAssertTrue(recent.waitForExistence(timeout: 10))
+        recent.tap()
+        let composer = app.descendants(matching: .any)["chat.composer"].firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("Complete the reply")
+        app.buttons["chat.send"].tap()
+        try await fixture("complete/delta")
+        XCTAssertTrue(app.staticTexts["chat.reply.streaming"].waitForExistence(timeout: 10))
+        try await fixture("complete/end")
+        XCTAssertTrue(app.buttons["chat.reply.completed"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(recent.waitForExistence(timeout: 5))
+        let value = recent.value as? String ?? ""
+        XCTAssertEqual(value, "now")
+        XCTAssertFalse(value.contains("in "), value)
     }
 }

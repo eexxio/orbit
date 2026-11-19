@@ -131,7 +131,11 @@ final class MessageActionsTests: XCTestCase {
         waitForReply("Reply 1: Tools reply", in: app)
         XCTAssertTrue(app.staticTexts["lookup"].exists || app.otherElements["lookup"].exists)
         openReplyMenu(in: app)
-        app.buttons["message.action.regenerate"].tap()
+        let regenerate = app.buttons["message.action.regenerate"]
+        let hittable = NSPredicate(format: "hittable == true")
+        let ready = XCTNSPredicateExpectation(predicate: hittable, object: regenerate)
+        await fulfillment(of: [ready], timeout: 5)
+        regenerate.tap()
         XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5))
         screenshot("regenerate-confirmation")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "This reply ran 1 tool(s).")).firstMatch.exists)

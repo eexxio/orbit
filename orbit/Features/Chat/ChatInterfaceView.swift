@@ -48,12 +48,6 @@ struct ChatInterfaceView: View {
                 VStack(spacing: 8) {
                     if editingID != nil { editBanner }
                     composer
-                        .confirmationDialog("Run this turn again?", isPresented: $confirmsReplacement, titleVisibility: .visible) {
-                            Button("Regenerate") { performReplacement() }
-                            Button("Cancel", role: .cancel) { pendingReplacement = nil }
-                        } message: {
-                            Text("This reply ran \(chat.lastReplyToolCount) tool(s). Running it again may repeat what they did.")
-                        }
                 }
             }
         }
@@ -69,6 +63,12 @@ struct ChatInterfaceView: View {
         .onChange(of: chat.isIdle) { validateEditing() }
         .sheet(item: $selectedText) { SelectMessageTextSheet(text: $0.text) }
         .sheet(item: $sharedText) { MessageShareSheet(text: $0.text) }
+        .confirmationDialog("Run this turn again?", isPresented: $confirmsReplacement, titleVisibility: .visible) {
+            Button("Regenerate") { performReplacement() }
+            Button("Cancel", role: .cancel) { pendingReplacement = nil }
+        } message: {
+            Text("This reply ran \(chat.lastReplyToolCount) tool(s). Running it again may repeat what they did.")
+        }
         .sensoryFeedback(.success, trigger: copyCount)
         .sensoryFeedback(.impact(weight: .light), trigger: chat.rewindCount)
         .sensoryFeedback(.error, trigger: chat.rewindFailureCount)

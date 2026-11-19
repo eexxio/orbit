@@ -152,6 +152,7 @@ class HermesStub(BaseHTTPRequestHandler):
         self.runtime = "runtime"
         self.stored = "fixture"
         self.model = DEFAULT_MODEL
+        switcher = fixture_id[0:1].islower()
         self.canonical = fixture_id.startswith(("canonical-", "conflict-", "fallback-", "retired-"))
         with STATS_LOCK:
             STATS[fixture_id]["connections"] += 1
@@ -166,7 +167,7 @@ class HermesStub(BaseHTTPRequestHandler):
                         state = STATS[fixture_id]
                         if method == "session.create":
                             self.model = params.get("model", WORK_MODEL if self.profile == "work" else DEFAULT_MODEL)
-                            if fixture_id[0:1].islower():
+                            if switcher:
                                 self.stored = "new-fixture"
                                 state.update(created_profile=self.profile, created_model=self.model,
                                              created_provider=params.get("provider", ""))
@@ -176,7 +177,8 @@ class HermesStub(BaseHTTPRequestHandler):
                                 self.model = state.get("created_model", DEFAULT_MODEL)
                             else:
                                 self.model = state.get("model", "example/retired" if fixture_id.startswith("retired-") else DEFAULT_MODEL)
-                            state["resumed_profile"] = self.profile
+                            if switcher:
+                                state["resumed_profile"] = self.profile
                         revision = state.get("mutations", 0) + state.get("conflicts", 0) + 7
                         if method == "session.resume":
                             state["resumes"] = state.get("resumes", 0) + 1
@@ -219,7 +221,8 @@ class HermesStub(BaseHTTPRequestHandler):
                     self.scenario = SCENARIOS.get(request["params"]["text"])
                     with STATS_LOCK:
                         STATS[fixture_id]["prompts"] += 1
-                        STATS[fixture_id]["prompt_model"] = self.model
+                        if switcher:
+                            STATS[fixture_id]["prompt_model"] = self.model
                     if self.canonical and not params.get("input_id"):
                         self.error(request, 4001, "input_id required")
                     else:

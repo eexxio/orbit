@@ -4,7 +4,7 @@ Thanks for helping! This guide covers how to get set up and what a good pull req
 
 ## Development setup
 
-1. Install **Xcode 27.2 or later**.
+1. Install **Xcode 27.0 or later**.
 2. Fork and clone the repository, then open `orbit.xcodeproj`.
 3. Under the **orbit** target → *Signing & Capabilities*, choose your own Team. If needed, give it a unique
    bundle identifier. **Do not commit these signing changes.** Before you commit, unstage them with

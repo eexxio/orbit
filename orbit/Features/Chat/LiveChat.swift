@@ -8,15 +8,24 @@ import Observation
 /// up the same object, thinking row and all.
 @MainActor @Observable
 final class LiveChat {
+    enum ReplyState: Equatable {
+        case idle, waiting, streaming
+        case interrupted(String), failed(String)
+
+        var isActive: Bool { self == .waiting || self == .streaming }
+    }
+
     /// The stored session key; nil for a new chat until the host assigns one.
     private(set) var key: String?
     var messages: [ChatMessage] = []
-    private(set) var isGenerating = false
+    private(set) var replyState: ReplyState = .idle
+    var isGenerating: Bool { replyState.isActive }
     /// True while an existing chat's history loads and nothing is cached to show.
     private(set) var isLoadingHistory = false
     /// The reply text and thinking blocks still being streamed into, if any.
     private(set) var streamingID: UUID?
     private(set) var reasoningID: UUID?
+    private(set) var liveToolIDs: Set<UUID> = []
     /// Whether a chat screen shows this chat. When none does, it's let go once its turn ends.
     var isOnScreen = false {
         didSet { if !isOnScreen { releaseIfIdle() } }
@@ -26,6 +35,7 @@ final class LiveChat {
     @ObservationIgnored private var streamStart: Date?
     @ObservationIgnored private var loadedHistory = false
     @ObservationIgnored private var conversation: HermesConversation?
+    @ObservationIgnored private var latestPromptID: UUID?
 
     init(key: String?) { self.key = key }
 
@@ -46,7 +56,7 @@ final class LiveChat {
         do {
             let fresh = try await client.messages(for: key)
             // Don't clobber a turn the user started while this loaded.
-            guard !isGenerating else { return }
+            guard latestPromptID == nil else { return }
             if fresh != messages.map(\.item) {
                 messages = fresh.map(ChatMessage.init)
             }
@@ -59,17 +69,22 @@ final class LiveChat {
     }
 
     func send(_ text: String) {
-        messages.append(ChatMessage(text: text, isUser: true))
-        isGenerating = true
+        guard !isGenerating else { return }
+        let prompt = ChatMessage(text: text, isUser: true)
+        messages.append(prompt)
+        latestPromptID = prompt.id
+        replyState = .waiting
         // Held while the turn runs, even if the screen goes away.
         if let key { HermesClient.shared.keepLive(self, as: key) }
         let chat = conversation ?? makeConversation()
         Task {
             do {
                 try await chat.send(text)
+                guard conversation === chat else { return }
                 adoptKey(chat.storedKey)
             } catch {
-                finishTurn(error: error.localizedDescription)
+                guard conversation === chat, isGenerating, latestPromptID == prompt.id else { return }
+                finishTurn(as: .failed(error.localizedDescription))
             }
         }
     }
@@ -93,14 +108,15 @@ final class LiveChat {
     func shutDown() {
         conversation?.close()
         conversation = nil
-        if isGenerating { finishTurn(error: nil) }
+        if isGenerating { finishTurn(as: .idle) }
     }
 
     private func makeConversation() -> HermesConversation {
         let chat = HermesConversation(storedKey: key)
         // `[weak self]` throughout: the conversation is owned by this object.
         chat.onDelta = { [weak self] delta in
-            guard let self else { return }
+            guard let self, isGenerating else { return }
+            replyState = .streaming
             reasoningID = nil
             if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
                 messages[index].text += delta
@@ -117,12 +133,13 @@ final class LiveChat {
         }
         // Text sent before a tool call is its own segment; whatever streams next starts a new one.
         chat.onInterim = { [weak self] text, alreadyStreamed in
-            guard let self else { return }
+            guard let self, isGenerating else { return }
+            replyState = .streaming
             if !alreadyStreamed { messages.append(ChatMessage(text: text, isUser: false)) }
             streamingID = nil
         }
         chat.onReasoning = { [weak self] text, replace in
-            guard let self else { return }
+            guard let self, isGenerating else { return }
             streamingID = nil
             if let id = reasoningID, let index = messages.firstIndex(where: { $0.id == id }) {
                 messages[index].text = replace ? text : messages[index].text + text
@@ -133,19 +150,23 @@ final class LiveChat {
             }
         }
         chat.onToolStart = { [weak self] tool in
-            guard let self else { return }
+            guard let self, isGenerating else { return }
             streamingID = nil
             reasoningID = nil
-            messages.append(ChatMessage(HermesMessage(role: "tool", text: "", tool: tool)))
+            let message = ChatMessage(HermesMessage(role: "tool", text: "", tool: tool))
+            liveToolIDs.insert(message.id)
+            messages.append(message)
         }
         chat.onToolComplete = { [weak self] id, summary in
-            guard let self, let index = messages.lastIndex(where: { $0.tool?.id == id }) else { return }
+            guard let self, isGenerating,
+                  let index = messages.lastIndex(where: { $0.tool?.id == id && self.liveToolIDs.contains($0.id) }) else { return }
+            liveToolIDs.remove(messages[index].id)
             messages[index].tool?.isDone = true
             messages[index].tool?.summary = summary
         }
         // The final text is the last segment only, so it replaces just that one.
-        chat.onComplete = { [weak self] finalText, outputTokens in
-            guard let self else { return }
+        chat.onComplete = { [weak self] finalText, outputTokens, failure in
+            guard let self, isGenerating else { return }
             if let finalText, !finalText.isEmpty {
                 if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
                     messages[index].text = finalText
@@ -161,28 +182,33 @@ final class LiveChat {
                 let soleReply = index == turnStart && index == messages.count - 1
                 messages[index].rate = TokenRate(tokens: soleReply ? outputTokens : nil, text: messages[index].text, since: streamStart)
             }
-            finishTurn(error: nil)
+            finishTurn(as: failure.map(ReplyState.failed) ?? .idle)
         }
         chat.onError = { [weak self] message in
-            self?.finishTurn(error: message)
+            self?.finishTurn(as: .failed(message))
+        }
+        chat.onDisconnect = { [weak self] in
+            self?.finishTurn(as: .interrupted(HermesError.socketClosed.localizedDescription))
         }
         conversation = chat
         return chat
     }
 
-    private func finishTurn(error: String?) {
-        if let error {
-            messages.append(ChatMessage(text: "⚠️ \(error)", isUser: false))
-        }
+    private func finishTurn(as state: ReplyState) {
+        guard isGenerating else { return }
         streamingID = nil
         reasoningID = nil
+        liveToolIDs.removeAll()
         streamStart = nil
-        isGenerating = false
-        // An interrupted or failed turn leaves no spinner running.
-        for index in messages.indices where messages[index].tool?.isDone == false {
-            messages[index].tool?.isDone = true
-        }
+        replyState = state
         adoptKey(conversation?.storedKey)
+        switch state {
+        case .failed, .interrupted:
+            conversation?.close()
+            conversation = nil
+        default:
+            break
+        }
         if let key {
             let transcript = messages
                 .filter { !($0.role == "assistant" && $0.text.hasPrefix("⚠️ ")) }

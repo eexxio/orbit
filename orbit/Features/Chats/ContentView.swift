@@ -55,6 +55,8 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "square.and.pencil")
                     }
+                    .accessibilityLabel("New chat")
+                    .accessibilityIdentifier("chats.new")
                 }
             }
             .navigationDestination(isPresented: $startNewChat) {

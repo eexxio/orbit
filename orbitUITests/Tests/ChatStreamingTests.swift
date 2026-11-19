@@ -1,0 +1,123 @@
+import XCTest
+
+final class ChatStreamingTests: XCTestCase {
+    private let address = "http://127.0.0.1:18765"
+    private let partial = "Here is the first part"
+
+    @MainActor
+    func testReplyStreamsThenCompletes() async throws {
+        let app = launchChat()
+        send("Complete the reply", in: app)
+
+        let waiting = app.staticTexts["chat.reply.waiting"]
+        XCTAssertTrue(waiting.waitForExistence(timeout: 10))
+        screenshot("chat-waiting")
+        try await advance("complete", to: "delta")
+
+        let streaming = app.staticTexts["chat.reply.streaming"]
+        XCTAssertTrue(streaming.waitForExistence(timeout: 10))
+        XCTAssertTrue(reply(partial, in: app).exists)
+        XCTAssertFalse(waiting.exists)
+        XCTAssertFalse(app.buttons["Copy reply"].exists)
+        screenshot("chat-streaming")
+        try await advance("complete", to: "end")
+
+        XCTAssertTrue(reply(partial + " and the ending.", in: app).waitForExistence(timeout: 10))
+        XCTAssertFalse(reply(partial, in: app).exists)
+        XCTAssertTrue(streaming.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Copy reply"].exists)
+        screenshot("chat-completed")
+    }
+
+    @MainActor
+    func testSocketCloseKeepsPartialReplyAndAllowsAnotherSend() async throws {
+        let app = launchChat()
+        send("Close the connection", in: app)
+        try await advance("disconnect", to: "delta")
+
+        let streaming = app.staticTexts["chat.reply.streaming"]
+        XCTAssertTrue(streaming.waitForExistence(timeout: 10))
+        try await advance("disconnect", to: "end")
+
+        let interrupted = app.staticTexts["chat.reply.interrupted"]
+        XCTAssertTrue(interrupted.waitForExistence(timeout: 10))
+        XCTAssertTrue(reply(partial, in: app).exists)
+        XCTAssertFalse(streaming.exists)
+        screenshot("chat-interrupted")
+
+        send("Send after reconnecting", in: app)
+        XCTAssertTrue(reply("The next reply arrived.", in: app).waitForExistence(timeout: 10))
+        XCTAssertFalse(interrupted.exists)
+    }
+
+    @MainActor
+    func testServerFailureReenablesSendWithoutLosingDraft() async throws {
+        let app = launchChat()
+        send("Fail the reply", in: app)
+        try await advance("failure", to: "delta")
+        let streaming = app.staticTexts["chat.reply.streaming"]
+        XCTAssertTrue(streaming.waitForExistence(timeout: 10))
+
+        let draft = composer(in: app)
+        draft.tap()
+        draft.typeText("My next message")
+        let sendButton = app.buttons["chat.send"]
+        XCTAssertFalse(sendButton.isEnabled)
+        try await advance("failure", to: "end")
+
+        XCTAssertTrue(app.staticTexts["chat.reply.failed"].waitForExistence(timeout: 10))
+        XCTAssertFalse(streaming.exists)
+        XCTAssertTrue(reply(partial, in: app).exists)
+        XCTAssertEqual(draft.value as? String, "My next message")
+        XCTAssertTrue(sendButton.isEnabled)
+        screenshot("chat-failed")
+    }
+
+    @MainActor
+    private func launchChat() -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-hermes.address", address, "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let newChat = app.buttons["chats.new"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 10))
+        newChat.tap()
+        return app
+    }
+
+    @MainActor
+    private func composer(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)["chat.composer"].firstMatch
+    }
+
+    @MainActor
+    private func send(_ text: String, in app: XCUIApplication) {
+        let field = composer(in: app)
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        field.typeText(text)
+        let button = app.buttons["chat.send"]
+        XCTAssertTrue(button.isEnabled)
+        button.tap()
+    }
+
+    @MainActor
+    private func reply(_ text: String, in app: XCUIApplication) -> XCUIElement {
+        app.staticTexts.matching(NSPredicate(format: "label == %@", text)).firstMatch
+    }
+
+    private func advance(_ scenario: String, to phase: String) async throws {
+        var request = URLRequest(url: URL(string: "\(address)/fixture/\(scenario)/\(phase)")!, timeoutInterval: 5)
+        request.httpMethod = "POST"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 204)
+    }
+
+    @MainActor
+    private func screenshot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

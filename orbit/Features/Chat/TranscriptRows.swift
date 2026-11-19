@@ -44,14 +44,18 @@ struct ReasoningRow: View {
 /// One tool call as a compact line: its name, what it ran on, and its result summary.
 struct ToolCallRow: View {
     let tool: HermesToolCall
+    let isLive: Bool
 
     var body: some View {
         HStack(spacing: 8) {
             Group {
                 if tool.isDone {
                     Image(systemName: "checkmark.circle")
-                } else {
+                } else if isLive {
                     ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "exclamationmark.circle")
+                        .accessibilityLabel("Tool result not received")
                 }
             }
             .frame(width: 16)

@@ -6,6 +6,22 @@ enum AppearanceKey {
     static let theme = "hermes.theme"
     /// Whether chats show the agent's tool calls as rows.
     static let showToolCalls = "hermes.showToolCalls"
+    static let readAloud = "hermes.readAloud"
+}
+
+enum ReadAloud: String, CaseIterable, Identifiable {
+    case off, afterVoice, always
+
+    static let defaultValue: Self = .off
+
+    var id: Self { self }
+    var name: LocalizedStringKey {
+        switch self {
+        case .off: "Off"
+        case .afterVoice: "After voice"
+        case .always: "Always"
+        }
+    }
 }
 
 /// The tint for buttons, links and your own chat bubbles. `mono` follows the grayscale brand.

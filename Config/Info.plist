@@ -9,5 +9,9 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>orbit connects to your Hermes Agent server on your local network.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>orbit listens while you dictate a message.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>orbit turns your speech into text on this device. Nothing you say is sent anywhere until you send the message.</string>
 </dict>
 </plist>

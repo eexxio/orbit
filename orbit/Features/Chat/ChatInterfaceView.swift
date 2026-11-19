@@ -1,6 +1,7 @@
 
 import SwiftUI
 import MarkdownUI
+import AVFoundation
 
 struct ChatInterfaceView: View {
 
@@ -15,9 +16,16 @@ struct ChatInterfaceView: View {
 
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
     @AppStorage(AppearanceKey.showToolCalls) private var showToolCalls = true
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .subheadline) private var replyActionGlyphSize = 18.0
     @State private var chat: LiveChat
+    @State private var dictation = ComposerDictation()
+    @State private var speech = ReplySpeaker.shared
     @State private var scrollPosition = ScrollPosition()
     @State private var draft = ""
+    @State private var draftWasDictated = false
+    @State private var speechTap = 0
     @State private var stopCount = 0
 
     @FocusState private var composerIsFocused: Bool
@@ -34,15 +42,54 @@ struct ChatInterfaceView: View {
                 }
             }
             .background(Color(uiColor: .systemBackground))
+            .simultaneousGesture(TapGesture().onEnded { dismissVoiceNotice() })
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                composer
+                VStack(spacing: 8) {
+                    DictationNoticeView(dictation: dictation, accent: accent, retry: toggleDictation)
+                    composer
+                }
+                .animation(.easeInOut(duration: 0.2), value: dictation.notice)
+                .animation(.easeInOut(duration: 0.2), value: dictation.phase == .preparing)
             }
         }
         .task { await chat.loadHistory() }
         .task { await focusComposerForNewChat() }
-        .onAppear { chat.isOnScreen = true }
+        .task { await dictation.checkAvailability() }
+        .onAppear {
+            chat.isOnScreen = true
+            chat.onReplyCompleted = readCompletedReply
+        }
         // Only lets the chat go if no turn is running; otherwise it finishes in the background.
-        .onDisappear { chat.isOnScreen = false }
+        .onDisappear {
+            chat.onReplyCompleted = nil
+            chat.isOnScreen = false
+            dictation.stop()
+            dictation.dismissNotice()
+            speech.stop()
+        }
+        .onChange(of: scenePhase) {
+            if scenePhase != .active {
+                speech.stop()
+                if dictation.phase != .permission || scenePhase == .background { dictation.stop() }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.didBecomeInactiveNotification)) { notification in
+            guard let context = notification.userInfo?[AVAudioSession.deactivationContextKey] as? AVAudioSession.DeactivationContext,
+                  context.source == .system else {
+                return
+            }
+            dictation.stop()
+            speech.stop()
+        }
+        .sensoryFeedback(trigger: dictation.phase) { old, new in
+            if new == .listening { return .start }
+            if (old == .listening || old == .finishing) && new == .idle && dictation.heardSpeech {
+                return .stop
+            }
+            return nil
+        }
+        .sensoryFeedback(.warning, trigger: dictation.notice) { _, new in new != nil }
+        .sensoryFeedback(.selection, trigger: speechTap)
     }
 
     // MARK: - Loading State
@@ -212,9 +259,17 @@ struct ChatInterfaceView: View {
                                 UIPasteboard.general.string = copyText
                             } label: {
                                 Image(systemName: "doc.on.doc")
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: replyActionGlyphSize, height: replyActionGlyphSize)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(.rect)
                             }
+                            .buttonStyle(.plain)
                             .accessibilityLabel("Copy reply")
                             .accessibilityIdentifier(isCompletedReply ? "chat.reply.completed" : "chat.reply.copy")
+
+                            readAloudButton(message.id, text: copyText)
                         }
 
                         if let rate = message.rate {
@@ -227,21 +282,78 @@ struct ChatInterfaceView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 }
+
+                if speech.failedID == message.id {
+                    Label("Couldn’t read this reply aloud.", systemImage: "exclamationmark.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("chat.reply.speak.error")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func readAloudButton(_ id: UUID, text: String) -> some View {
+        let isSpeaking = speech.speakingID == id
+        return Button {
+            if isSpeaking {
+                speech.stop()
+            } else if scenePhase == .active, !dictation.isBusy {
+                speech.start(id: id, text: text)
+            }
+            speechTap += 1
+        } label: {
+            Image(systemName: isSpeaking ? "speaker.wave.2.fill" : "speaker.wave.2")
+                .resizable()
+                .scaledToFit()
+                .symbolEffect(.pulse.wholeSymbol, isActive: isSpeaking && !reduceMotion)
+                .foregroundStyle(dictation.isBusy ? AnyShapeStyle(.tertiary)
+                                 : isSpeaking ? AnyShapeStyle(accent.color) : AnyShapeStyle(.secondary))
+                .frame(width: replyActionGlyphSize, height: replyActionGlyphSize)
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(dictation.isBusy)
+        .animation(.snappy(duration: 0.2), value: isSpeaking)
+        .accessibilityLabel(isSpeaking ? "Stop reading" : "Read reply aloud")
+        .accessibilityIdentifier("chat.reply.speak")
+    }
+
+    private func readCompletedReply(wasDictated: Bool) {
+        guard chat.isOnScreen, scenePhase == .active, UIApplication.shared.applicationState == .active,
+              !dictation.isBusy, !UIAccessibility.isVoiceOverRunning else { return }
+        let setting = UserDefaults.standard.string(forKey: AppearanceKey.readAloud)
+            .flatMap(ReadAloud.init(rawValue:)) ?? ReadAloud.defaultValue
+        guard setting == .always || (setting == .afterVoice && wasDictated),
+              let last = chat.messages.reversed().prefix(while: { !$0.isUser }).first(where: { $0.role == "assistant" }),
+              let text = replyCopies[last.id] else { return }
+        speech.start(id: last.id, text: text)
     }
 
     // MARK: - Composer
 
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            // Grows with its text up to six lines, then scrolls.
-            TextField("Ask anything", text: $draft, axis: .vertical)
-                .focused($composerIsFocused)
-                .lineLimit(1...6)
-                .padding(.vertical, 11)
-                .accessibilityIdentifier("chat.composer")
+            HStack(spacing: 8) {
+                if dictation.phase == .listening { DictationDot() }
+                // Grows with its text up to six lines, then scrolls.
+                TextField(dictation.phase == .listening ? "Listening…" : "Ask anything", text: editableDraft, axis: .vertical)
+                    .focused($composerIsFocused)
+                    .lineLimit(1...6)
+                    .padding(.vertical, 11)
+                    .accessibilityIdentifier("chat.composer")
+            }
+            .contentShape(.rect)
+            .simultaneousGesture(TapGesture().onEnded {
+                dismissVoiceNotice()
+                composerIsFocused = true
+            })
+
+            if dictation.available {
+                DictateButton(dictation: dictation, accent: accent, toggle: toggleDictation)
+            }
 
             Button {
                 if chat.isGenerating {
@@ -275,35 +387,80 @@ struct ChatInterfaceView: View {
         .frame(minHeight: 44)
         // At rest the bar narrows toward the center; focusing it spreads it full width.
         .frame(maxWidth: composerIsCollapsed ? 240 : .infinity)
-        .contentShape(.rect)
-        .onTapGesture { composerIsFocused = true }
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
-        .animation(.spring(duration: 0.4, bounce: 0.2), value: composerIsCollapsed)
+        .animation(composerAnimation, value: composerIsCollapsed)
+        .animation(composerAnimation, value: dictation.phase == .listening)
+    }
+
+    private var composerAnimation: Animation {
+        reduceMotion ? .default : .spring(duration: 0.4, bounce: 0.2)
     }
 
     /// Collapsed while unfocused, unless there is a draft that would get squeezed.
     private var composerIsCollapsed: Bool {
-        !composerIsFocused && draft.isEmpty
+        !composerIsFocused && draft.isEmpty && !dictation.isCapturing
     }
 
     private var canSend: Bool {
-        !chat.isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !chat.isGenerating && dictation.phase != .finishing &&
+            !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var editableDraft: Binding<String> {
+        Binding(get: { draft }, set: { text in
+            if dictation.isBusy { dictation.stop() }
+            dictation.dismissNotice()
+            draft = text
+            if text.isEmpty { draftWasDictated = false }
+        })
+    }
+
+    private func dismissVoiceNotice() {
+        if dictation.phase == .preparing { dictation.stop() }
+        dictation.dismissNotice()
+    }
+
+    private func toggleDictation() {
+        switch dictation.phase {
+        case .listening:
+            dictation.finish()
+        case .preparing:
+            dictation.stop()
+        case .idle:
+            guard scenePhase == .active else { return }
+            speech.stop()
+            let initialDraft = draft
+            dictation.start(draft: initialDraft) { text in
+                if text != initialDraft { draftWasDictated = true }
+                draft = text
+            }
+        case .finishing, .permission:
+            break
+        }
     }
 
     // MARK: - Send Message
 
     private func sendMessage() {
+        guard canSend else { return }
+        speech.stop()
+        dictation.dismissNotice()
+        if dictation.phase == .listening {
+            dictation.finish(then: sendMessage)
+            return
+        }
+        if dictation.isBusy { dictation.stop() }
+
         let text = draft.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
 
-        guard canSend else { return }
-
         draft = ""
         composerIsFocused = false
-        chat.send(text)
+        chat.send(text, wasDictated: draftWasDictated)
+        draftWasDictated = false
     }
 
     @ViewBuilder

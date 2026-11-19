@@ -4,6 +4,7 @@ struct ChatRow: View {
     let chat: HermesSession
     let isReplying: Bool
     let now: Date
+    var selectedInWorkspace = false
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var restingLeading: CGFloat?
@@ -13,7 +14,7 @@ struct ChatRow: View {
         Group {
             if typeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(chat.title).lineLimit(3)
+                    title.lineLimit(3)
                     HStack { if isReplying { ReplyingDot() }; metadata }
                 }
             } else {
@@ -22,7 +23,7 @@ struct ChatRow: View {
                         ReplyingDot().alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
                             .transition(reduceMotion ? .opacity : .scale(scale: 0.5).combined(with: .opacity))
                     }
-                    Text(chat.title).lineLimit(1).truncationMode(.tail).layoutPriority(1)
+                    title.lineLimit(1).truncationMode(.tail).layoutPriority(1)
                     Spacer(minLength: 8)
                     if swipeInset == 0 { metadata }
                 }
@@ -43,6 +44,8 @@ struct ChatRow: View {
         .accessibilityValue(accessibilityValue)
         .accessibilityIdentifier("chats.row.\(chat.id)")
     }
+
+    private var title: Text { Text(chat.title).fontWeight(selectedInWorkspace ? .semibold : .regular) }
 
     @ViewBuilder private var metadata: some View {
         Group {

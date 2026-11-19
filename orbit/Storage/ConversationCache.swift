@@ -28,14 +28,19 @@ final class ConversationCache {
     }
 
     private let folder: URL
+    var accountScope: String { folder.lastPathComponent }
     private var index: Index
 
-    init(address: String, username: String) {
+    static func scope(address: String, username: String) -> String {
         let identity = address.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) + "\n" + username
         let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return String(digest.prefix(24))
+    }
+
+    init(address: String, username: String) {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ConversationCache", isDirectory: true)
-        folder = base.appendingPathComponent(String(digest.prefix(24)), isDirectory: true)
+        folder = base.appendingPathComponent(Self.scope(address: address, username: username), isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var root = base
         var values = URLResourceValues()

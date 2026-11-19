@@ -27,6 +27,17 @@ SCENARIOS = {
     "Send the next reply": "next",
 }
 SESSIONS = defaultdict(list)
+IPAD_FIXTURES = set()
+IPAD_TRANSCRIPTS = {
+    "pinned": (
+        "Can you outline the next steps for the prototype?",
+        "### Next steps\n\n1. Review the open questions.\n2. Pick one flow to prototype.\n3. Share it with two teammates for feedback.",
+    ),
+    "fixture": (
+        "Summarize the research notes.",
+        "### Research summary\n\nPeople want to find past conversations quickly and keep their current work in view.",
+    ),
+}
 FAIL_PATCH = set()
 LOCK = threading.RLock()
 
@@ -41,14 +52,20 @@ class HermesStub(BaseHTTPRequestHandler):
             with STATS_LOCK:
                 self.respond(json.dumps(STATS[fixture_id]).encode(), "application/json")
             return
+        if path == "/api/ws":
+            self.websocket(fixture_id)
+            return
         if path.endswith('/mutation-snapshot'):
             self.respond(json.dumps({'runtime_revision': 1, 'runtime_generation': 1}).encode(), 'application/json')
             return
         if path.endswith('/messages'):
-            self.respond(b'{"messages": []}', 'application/json')
-            return
-        if path == "/api/ws":
-            self.websocket(fixture_id)
+            key = path.split("/")[-2]
+            exchange = IPAD_TRANSCRIPTS.get(key, ()) if fixture_id in IPAD_FIXTURES else ()
+            messages = [
+                {"id": index, "role": role, "content": content}
+                for index, (role, content) in enumerate(zip(("user", "assistant"), exchange), start=1)
+            ]
+            self.respond(json.dumps({"messages": messages}).encode(), 'application/json')
             return
         if path == "/":
             self.respond(b'<script>window.__HERMES_SESSION_TOKEN__ = "fixture";</script>', "text/html")
@@ -66,12 +83,14 @@ class HermesStub(BaseHTTPRequestHandler):
     def do_POST(self):
         fixture_id, _, route = urlsplit(self.path).path.lstrip("/").partition("/")
         route = "/" + route
-        if route in {'/fixture/seed', '/fixture/empty', '/fixture/fail-patch'}:
+        if route in {'/fixture/seed', '/fixture/seed-ipad', '/fixture/empty', '/fixture/fail-patch'}:
             with LOCK:
                 if route == '/fixture/fail-patch':
                     FAIL_PATCH.add(fixture_id)
                 else:
                     FAIL_PATCH.discard(fixture_id)
+                    if route == '/fixture/seed-ipad':
+                        IPAD_FIXTURES.add(fixture_id)
                     now = time.time()
                     SESSIONS[fixture_id] = [] if route == '/fixture/empty' else [
                         {'id': 'older', 'title': 'Weekend plans', 'last_active': now - 9000},
@@ -157,7 +176,10 @@ class HermesStub(BaseHTTPRequestHandler):
             while (request := self.read_request()) is not None:
                 method = request["method"]
                 if method in {"session.create", "session.resume"}:
-                    self.result(request, {"session_id": "runtime", "stored_session_id": "fixture"})
+                    self.result(request, {
+                        "session_id": "runtime",
+                        "stored_session_id": request["params"].get("session_id", "fixture"),
+                    })
                 elif method == "gateway.ping":
                     self.result(request, {})
                 elif method == "prompt.submit":
@@ -167,6 +189,8 @@ class HermesStub(BaseHTTPRequestHandler):
                     self.result(request, {})
                     threading.Thread(target=self.reply, args=(fixture_id, request["params"]["text"]), daemon=True).start()
                 elif method == "session.interrupt":
+                    with STATS_LOCK:
+                        STATS[fixture_id]["interrupts"] = STATS[fixture_id].get("interrupts", 0) + 1
                     self.interrupt_received.set()
                     GATES[fixture_id, self.scenario, "interrupted"].set()
                     if self.scenario == "stop-ignore":

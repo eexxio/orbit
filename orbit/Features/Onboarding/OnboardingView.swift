@@ -182,7 +182,9 @@ private struct OnboardingConnect: View {
                 .disabled(client.baseURL == nil || connecting)
                 .accessibilityHint(client.baseURL == nil ? "Enter the server address first." : "")
                 .onboardingColumn()
-                .padding(.bottom, 16)
+                .padding(.vertical, 16)
+                // Solid, so the form's footers never show through behind the button.
+                .background(Color(.systemGroupedBackground))
         }
         .sensoryFeedback(.error, trigger: error.map { $0.localizedDescription })
         .onAppear { if client.address.isEmpty { focus = .address } }
@@ -322,7 +324,8 @@ private struct OnboardingConnected: View {
         .safeAreaInset(edge: .bottom) {
             OnboardingPrimaryButton(title: "Start your first chat", id: "onboarding.firstChat", action: startChat)
                 .onboardingColumn()
-                .padding(.bottom, 16)
+                .padding(.vertical, 16)
+                .background(Color(.systemBackground))
         }
         .navigationBarBackButtonHidden()
         .sensoryFeedback(.success, trigger: drawn) { _, new in new }

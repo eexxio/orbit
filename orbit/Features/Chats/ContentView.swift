@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var startNewChat = false
 
     /// Decided once at launch, not observed, so typing an address never closes onboarding mid-step.
+    @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
     @State private var onboardingAtLaunch = !HermesClient.shared.isConfigured
     @State private var showSetup = false
 
@@ -124,9 +125,18 @@ struct ContentView: View {
         } description: {
             Text("Connect orbit to your Hermes dashboard to see your chats.")
         } actions: {
-            Button("Set up") { showSetup = true }
-                .buttonStyle(.glassProminent)
-                .accessibilityIdentifier("chats.empty.setup")
+            Button {
+                showSetup = true
+            } label: {
+                Text("Set up")
+                    .font(.headline)
+                    .foregroundStyle(accent.onColor)
+                    .padding(.horizontal, 8)
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
+            .tint(accent.color)
+            .accessibilityIdentifier("chats.empty.setup")
         }
     }
 }

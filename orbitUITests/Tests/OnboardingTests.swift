@@ -77,7 +77,7 @@ final class OnboardingTests: XCTestCase {
 
         let error = app.descendants(matching: .any)["onboarding.error"].firstMatch
         XCTAssertTrue(error.waitForExistence(timeout: 10))
-        XCTAssertEqual(error.label, "Server error 403.")
+        XCTAssertEqual(error.label, "The server turned orbit away (403).")
         XCTAssertTrue(app.staticTexts["onboarding.cloudflareHint"].exists)
         XCTAssertTrue(app.buttons["onboarding.cloudflare"].exists)
         screenshot("onboarding-cloudflare-hint")

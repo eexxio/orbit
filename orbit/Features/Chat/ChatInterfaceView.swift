@@ -272,9 +272,10 @@ struct ChatInterfaceView: View {
 
     private var composer: some View {
         let shape = RoundedRectangle(cornerRadius: 22)
+        let historyPrompt = Text("Ask anything").foregroundColor(.primary.opacity(0.8))
         return HStack(alignment: .bottom, spacing: 8) {
             // Grows with its text up to six lines, then scrolls.
-            TextField("Ask anything", text: $draft, axis: .vertical)
+            TextField("Ask anything", text: $draft, prompt: isFollowingBottom ? nil : historyPrompt, axis: .vertical)
                 .focused($composerIsFocused)
                 .lineLimit(1...6)
                 .padding(.vertical, 11)

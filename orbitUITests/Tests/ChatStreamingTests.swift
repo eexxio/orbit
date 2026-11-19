@@ -1,7 +1,8 @@
 import XCTest
 
 final class ChatStreamingTests: XCTestCase {
-    private let address = "http://127.0.0.1:18765"
+    private let fixtureID = UUID()
+    private var address: String { "http://127.0.0.1:18765/\(fixtureID)" }
     private let partial = "Here is the first part"
 
     @MainActor
@@ -105,8 +106,14 @@ final class ChatStreamingTests: XCTestCase {
         field.tap()
         field.typeText(text)
         let button = app.buttons["chat.send"]
+        XCTAssertEqual(field.value as? String, text)
         XCTAssertTrue(button.isEnabled)
         button.tap()
+        let sent = reply(text, in: app)
+        if !sent.waitForExistence(timeout: 2), field.value as? String == text, button.isEnabled {
+            button.tap()
+        }
+        XCTAssertTrue(sent.waitForExistence(timeout: 5))
     }
 
     @MainActor

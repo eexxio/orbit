@@ -23,9 +23,10 @@ class HermesStub(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):
-        path = urlsplit(self.path).path
+        fixture_id, _, path = urlsplit(self.path).path.lstrip("/").partition("/")
+        path = "/" + path
         if path == "/api/ws":
-            self.websocket()
+            self.websocket(fixture_id)
             return
         if path == "/":
             self.respond(b'<script>window.__HERMES_SESSION_TOKEN__ = "fixture";</script>', "text/html")
@@ -42,10 +43,10 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path.split("/")
-        if len(path) != 4 or path[1] != "fixture" or path[2] not in SCENARIOS.values() or path[3] not in {"delta", "end"}:
+        if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end"}:
             self.send_error(404)
             return
-        GATES[tuple(path[2:])].set()
+        GATES[path[1], path[3], path[4]].set()
         self.send_response(204)
         self.end_headers()
 
@@ -56,7 +57,7 @@ class HermesStub(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def websocket(self):
+    def websocket(self, fixture_id):
         key = self.headers["Sec-WebSocket-Key"]
         if not key or self.headers.get("Upgrade", "").lower() != "websocket":
             self.send_error(400)
@@ -78,7 +79,7 @@ class HermesStub(BaseHTTPRequestHandler):
                     self.result(request, {})
                 elif method == "prompt.submit":
                     self.result(request, {})
-                    if not self.reply(request["params"]["text"]):
+                    if not self.reply(fixture_id, request["params"]["text"]):
                         return
                 else:
                     self.write_json({"jsonrpc": "2.0", "id": request["id"],
@@ -86,17 +87,17 @@ class HermesStub(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def reply(self, text):
+    def reply(self, fixture_id, text):
         if text == "Send after reconnecting":
             self.event("message.complete", {"text": "The next reply arrived."})
             return True
         scenario = SCENARIOS[text]
-        if not self.wait(scenario, "delta"):
+        if not self.wait(fixture_id, scenario, "delta"):
             return False
         self.event("message.delta", {"text": PARTIAL})
         if scenario == "disconnect":
             self.event("tool.start", {"tool_id": "weather", "name": "get_weather"})
-        if not self.wait(scenario, "end"):
+        if not self.wait(fixture_id, scenario, "end"):
             return False
         if scenario == "disconnect":
             self.write_frame(8, struct.pack("!H", 1001))
@@ -110,10 +111,11 @@ class HermesStub(BaseHTTPRequestHandler):
         return True
 
     @staticmethod
-    def wait(scenario, phase):
-        gate = GATES[scenario, phase]
+    def wait(fixture_id, scenario, phase):
+        key = (fixture_id, scenario, phase)
+        gate = GATES[key]
         released = gate.wait(timeout=30)
-        gate.clear()
+        GATES.pop(key, None)
         return released
 
     def read_request(self):

@@ -1,3 +1,4 @@
+import Accessibility
 import Foundation
 import Observation
 
@@ -17,6 +18,20 @@ final class LiveChat {
 
     /// The stored session key; nil for a new chat until the host assigns one.
     private(set) var key: String?
+    let title: String
+    private(set) var selectedProfile: String?
+    private(set) var selectedModel: HermesModelOption?
+    private(set) var currentModel: String?
+    private(set) var currentProvider: String?
+    private(set) var pendingModel: HermesModelOption?
+    private(set) var changingModel: HermesModelOption?
+    private(set) var isProfileGone = false
+    private(set) var modelError: String?
+    private(set) var failedModel: HermesModelOption?
+    var modelConfirmation: HermesModelConfirmation?
+    var profile: String { selectedProfile ?? HermesClient.shared.browsingProfile }
+    var canSend: Bool { !isGenerating && pendingModel == nil && changingModel == nil && !isProfileGone }
+    var isDraft: Bool { key == nil && !isGenerating && conversation == nil }
     var messages: [ChatMessage] = []
     private(set) var replyState: ReplyState = .idle
     var isGenerating: Bool { replyState.isActive }
@@ -38,7 +53,83 @@ final class LiveChat {
     @ObservationIgnored private var latestPromptID: UUID?
     @ObservationIgnored private var pendingInterrupt: Task<Void, Never>?
 
-    init(key: String?) { self.key = key }
+    init(session: HermesSession?, profile: String? = nil) {
+        key = session?.id
+        title = session?.title ?? "New chat"
+        selectedProfile = session?.profile ?? profile ?? (session == nil ? nil : HermesClient.shared.browsingProfile)
+        currentModel = session?.model
+    }
+
+    func selectProfile(_ name: String) {
+        guard isDraft, name != profile else { return }
+        selectedProfile = name
+        selectedModel = nil
+        currentModel = nil
+        currentProvider = nil
+        isProfileGone = false
+        HermesClient.shared.browse(name)
+    }
+
+    func checkProfiles(_ profiles: [HermesChatProfile]) {
+        if !isDraft && !profiles.isEmpty {
+            isProfileGone = !profiles.contains { $0.name == profile }
+        }
+    }
+
+    func availableModels(refresh: Bool) async throws -> HermesModelCatalog {
+        if let catalog = try await conversation?.liveModels(refresh: refresh) {
+            if let name = catalog.currentModel, pendingModel == nil, changingModel == nil {
+                updateModel(name, provider: catalog.currentProvider)
+            }
+            return catalog
+        }
+        return try await HermesClient.shared.chatModels(profile: profile, refresh: refresh)
+    }
+
+    func isCurrent(_ option: HermesModelOption) -> Bool {
+        if isDraft { return selectedModel == option }
+        return currentModel == option.name && (currentProvider == nil || currentProvider == option.provider)
+    }
+
+    /// Returns true when the picker can close (a pick was applied, queued, or cleared).
+    func pickModel(_ option: HermesModelOption?, confirmation: HermesModelConfirmation? = nil) async -> Bool {
+        guard changingModel == nil, !isProfileGone else { return false }
+        modelError = nil
+        failedModel = nil
+        modelConfirmation = nil
+        if isDraft {
+            selectedModel = option
+            return true
+        }
+        guard let option else { return false }
+        if isCurrent(option) {
+            pendingModel = nil
+            return true
+        }
+        if isGenerating {
+            pendingModel = option
+            return true
+        }
+        changingModel = option
+        defer {
+            changingModel = nil
+            releaseIfIdle()
+        }
+        await pendingInterrupt?.value
+        guard key != nil else { return false }
+        let connection = conversation ?? makeConversation()
+        do {
+            modelConfirmation = try await connection.changeModel(option, confirmation: confirmation)
+            return modelConfirmation == nil
+        } catch HermesError.profileGone {
+            isProfileGone = true
+            modelError = HermesError.profileGone.localizedDescription
+        } catch {
+            modelError = error.localizedDescription
+        }
+        failedModel = option
+        return false
+    }
 
     func loadHistory() async {
         guard !loadedHistory else { return }
@@ -55,12 +146,14 @@ final class LiveChat {
         defer { isLoadingHistory = false }
 
         do {
-            let fresh = try await client.messages(for: key)
+            let fresh = try await client.messages(for: key, profile: selectedProfile)
             // Don't clobber a turn the user started while this loaded.
             guard latestPromptID == nil else { return }
             if fresh != messages.map(\.item) {
                 messages = fresh.map(ChatMessage.init)
             }
+        } catch HermesError.http(404, _) {
+            if let profiles = try? await client.chatProfiles() { checkProfiles(profiles) }
         } catch {
             // Offline with a cached copy: keep showing it.
             if messages.isEmpty {
@@ -70,7 +163,8 @@ final class LiveChat {
     }
 
     func send(_ text: String) {
-        guard !isGenerating else { return }
+        guard canSend else { return }
+        if selectedProfile == nil { selectedProfile = profile }
         let prompt = ChatMessage(text: text, isUser: true)
         messages.append(prompt)
         latestPromptID = prompt.id
@@ -87,6 +181,7 @@ final class LiveChat {
                 adoptKey(chat.storedKey)
             } catch {
                 guard conversation === chat, isGenerating, latestPromptID == prompt.id, pendingInterrupt == nil else { return }
+                if case HermesError.profileGone = error { isProfileGone = true }
                 finishTurn(as: .failed(error.localizedDescription))
             }
         }
@@ -95,16 +190,17 @@ final class LiveChat {
     func stop() {
         guard isGenerating else { return }
         let chat = conversation
-        finishTurn(as: .stopped)
-        guard let chat, pendingInterrupt == nil else { return }
-        pendingInterrupt = Task {
-            let ok = await chat.interrupt(timeout: .seconds(3))
-            if !ok, conversation === chat {
-                chat.close()
-                conversation = nil
+        if let chat, pendingInterrupt == nil {
+            pendingInterrupt = Task {
+                let ok = await chat.interrupt(timeout: .seconds(3))
+                if !ok, conversation === chat {
+                    chat.close()
+                    conversation = nil
+                }
+                pendingInterrupt = nil
             }
-            pendingInterrupt = nil
         }
+        finishTurn(as: .stopped)
     }
 
     /// A new chat learns its key from the host; from then on reopening it from the list finds this object.
@@ -116,7 +212,7 @@ final class LiveChat {
 
     /// Closes the socket and drops the chat from `HermesClient` when nothing needs it any more.
     private func releaseIfIdle() {
-        guard !isOnScreen, !isGenerating else { return }
+        guard !isOnScreen, !isGenerating, changingModel == nil, pendingModel == nil else { return }
         conversation?.close()
         conversation = nil
         if let key { HermesClient.shared.releaseLive(self, key: key) }
@@ -124,13 +220,17 @@ final class LiveChat {
 
     /// Ends the turn without waiting for the host, for a sign-out or a server change.
     func shutDown() {
+        pendingModel = nil
         conversation?.close()
         conversation = nil
         if isGenerating { finishTurn(as: .idle) }
     }
 
     private func makeConversation() -> HermesConversation {
-        let chat = HermesConversation(storedKey: key)
+        let chat = HermesConversation(storedKey: key, profile: profile, model: selectedModel)
+        chat.onModel = { [weak self] name, provider, explicitlyChanged in
+            self?.updateModel(name, provider: provider, explicitlyChanged: explicitlyChanged)
+        }
         // `[weak self]` throughout: the conversation is owned by this object.
         chat.onDelta = { [weak self] delta in
             guard let self, isGenerating, pendingInterrupt == nil else { return }
@@ -229,14 +329,59 @@ final class LiveChat {
         default:
             break
         }
+        cacheTranscript()
+        Task { await HermesClient.shared.refreshSessions() }
+        if let option = pendingModel {
+            if case .interrupted = state {
+                pendingModel = nil
+            } else if key != nil {
+                Task {
+                    pendingModel = nil
+                    _ = await pickModel(option)
+                }
+            } else {
+                pendingModel = nil
+            }
+        }
+        releaseIfIdle()
+    }
+
+    private func updateModel(_ name: String, provider: String?, explicitlyChanged: Bool = false) {
+        let changed = currentModel.map { $0 != name || (currentProvider != nil && provider != nil && currentProvider != provider) }
+        currentModel = name
+        if let provider { currentProvider = provider }
+        if key != nil, changed ?? explicitlyChanged {
+            messages.append(ChatMessage(HermesMessage(role: "model-change", text: name)))
+            cacheTranscript()
+            if isOnScreen { AccessibilityNotification.Announcement("Model switched to \(name)").post() }
+        }
+    }
+
+    private func cacheTranscript() {
         if let key {
             let transcript = messages
                 .filter { !($0.role == "assistant" && $0.text.hasPrefix("⚠️ ")) }
                 .map(\.item)
             HermesClient.shared.cacheMessages(transcript, for: key)
         }
-        Task { await HermesClient.shared.refreshSessions() }
-        releaseIfIdle()
+    }
+
+    /// Local markers are never sent to Hermes. Place one back only when its preceding turn still matches.
+    static func restoringModelMarkers(in fresh: [HermesMessage], from cached: [HermesMessage]) -> [HermesMessage] {
+        var result = fresh
+        var anchorIndex: Int?
+        var start = result.startIndex
+        for item in cached {
+            if item.role == "user" || item.role == "assistant" {
+                anchorIndex = result[start...].firstIndex { $0.role == item.role && $0.text == item.text }
+                if let anchorIndex { start = anchorIndex + 1 }
+            } else if item.role == "model-change", let index = anchorIndex {
+                result.insert(item, at: index + 1)
+                start = index + 2
+                anchorIndex = index + 1
+            }
+        }
+        return result
     }
 }
 

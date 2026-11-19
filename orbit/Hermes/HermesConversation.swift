@@ -6,6 +6,11 @@ final class HermesConversation {
     /// The stored session key, once the host has one.
     private(set) var storedKey: String?
     private var runtimeID: String?
+    private var isCanonical = false
+    private var usesLegacyModelChange = false
+    private var executionGeneration: Int?
+    private let profile: String
+    private let initialModel: HermesModelOption?
     private var acceptsReplyEvents = true
     private var socket: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
@@ -20,6 +25,7 @@ final class HermesConversation {
     var onError: ((String) -> Void)?
     var onDisconnect: (() -> Void)?
     var onTitle: ((String) -> Void)?
+    var onModel: ((_ name: String, _ provider: String?, _ explicitlyChanged: Bool) -> Void)?
     /// Reply text sealed before a tool call; `alreadyStreamed` means it came as deltas too.
     var onInterim: ((_ text: String, _ alreadyStreamed: Bool) -> Void)?
     /// Thinking text; `replace` swaps the current block's text instead of appending to it.
@@ -29,7 +35,11 @@ final class HermesConversation {
 
     private let client = HermesClient.shared
 
-    init(storedKey: String?) { self.storedKey = storedKey }
+    init(storedKey: String?, profile: String, model: HermesModelOption?) {
+        self.storedKey = storedKey
+        self.profile = profile
+        initialModel = model
+    }
 
     func close() {
         connectionID = UUID()
@@ -37,6 +47,7 @@ final class HermesConversation {
         reader = nil; heartbeat = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil; runtimeID = nil
+        executionGeneration = nil
         failPending(HermesError.socketClosed)
     }
 
@@ -45,18 +56,111 @@ final class HermesConversation {
         if socket == nil || runtimeID == nil { try await open() }
         guard let runtimeID else { throw HermesError.unsupported }
         acceptsReplyEvents = true
-        _ = try await call("prompt.submit", ["session_id": .string(runtimeID), "text": .string(text), "queued": .bool(true)])
+        var params: [String: JSON] = ["session_id": .string(runtimeID), "text": .string(text), "queued": .bool(true)]
+        if isCanonical {
+            params["profile"] = .string(profile)
+            params["input_id"] = .string(UUID().uuidString)
+        }
+        let reply = try await call("prompt.submit", params)
+        if let generation = reply["execution_generation"].int { executionGeneration = generation }
     }
 
     func interrupt(timeout: Duration) async -> Bool {
         acceptsReplyEvents = false
         guard let runtimeID else { return false }
         do {
-            _ = try await call("session.interrupt", ["session_id": .string(runtimeID)], timeout: timeout)
+            var params: [String: JSON] = ["session_id": .string(runtimeID)]
+            if isCanonical {
+                guard let executionGeneration else { return false }
+                params["profile"] = .string(profile)
+                params["execution_generation"] = .number(Double(executionGeneration))
+            }
+            _ = try await call("session.interrupt", params, timeout: timeout)
             return true
         } catch {
             return false
         }
+    }
+
+    /// Change only this session. Canonical owners fence writes with a fresh revision and generation.
+    func changeModel(_ option: HermesModelOption, confirmation: HermesModelConfirmation?) async throws -> HermesModelConfirmation? {
+        guard storedKey != nil else { throw HermesError.unsupported }
+        if socket == nil || runtimeID == nil { try await open() }
+        guard let runtimeID else { throw HermesError.unsupported }
+        var reply: JSON?
+        if isCanonical && !usesLegacyModelChange {
+            do {
+                reply = try await mutateModel(option, token: confirmation?.token, sessionID: runtimeID)
+            } catch HermesError.rpc(-32601, _) {
+                usesLegacyModelChange = true
+            }
+        }
+        let response: JSON
+        if let reply { response = reply }
+        else { response = try await setLegacyModel(option, confirmed: confirmation != nil, sessionID: runtimeID) }
+        if response["confirm_required"].flag == true {
+            return HermesModelConfirmation(option: option, message: response["confirm_message"].text
+                                           ?? "Hermes requires confirmation to use this model.", token: response["confirm"].text)
+        }
+        guard let name = (response["model"].text ?? response["value"].text), !name.isEmpty else { throw HermesError.unsupported }
+        onModel?(name, response["provider"].text ?? response["info"]["provider"].text ?? option.provider, true)
+        return nil
+    }
+
+    private func mutateModel(_ option: HermesModelOption, token: String?, sessionID: String) async throws -> JSON {
+        var payload: [String: JSON] = ["model": .string(option.name), "provider": .string(option.provider)]
+        if let token { payload["confirm"] = .string(token) }
+        for attempt in 0..<2 {
+            let snapshot = try await call("session.resume", resumeParams(sessionID), timeout: .seconds(5))
+            guard snapshot["running"].flag != true else {
+                throw HermesError.server("Wait until the chat finishes before changing its model.")
+            }
+            guard let revision = snapshot["revision"].int, let generation = snapshot["execution_generation"].int
+            else { throw HermesError.unsupported }
+            let resolved = snapshot["session_id"].text ?? sessionID
+            do {
+                return try await call("session.mutate", [
+                    "profile": .string(profile), "session_id": .string(resolved), "request_id": .string(UUID().uuidString),
+                    "expected_revision": .number(Double(revision)), "expected_generation": .number(Double(generation)),
+                    "operation": .string("model"), "payload": .object(payload)
+                ], timeout: .seconds(15))
+            } catch HermesError.modelConflict {
+                if attempt == 1 { throw HermesError.modelConflict }
+            }
+        }
+        throw HermesError.modelConflict
+    }
+
+    private func setLegacyModel(_ option: HermesModelOption, confirmed: Bool, sessionID: String) async throws -> JSON {
+        // The legacy setter parses whitespace-delimited flags. Only pass single safe tokens.
+        guard [option.name, option.provider].allSatisfy({ value in
+            !value.isEmpty && !value.hasPrefix("-") && value.utf8.allSatisfy { $0 > 32 && $0 < 127 }
+        }) else { throw HermesError.unsupported }
+        return try await call("config.set", [
+            "session_id": .string(sessionID), "key": .string("model"),
+            "value": .string("\(option.name) --provider \(option.provider) --session"),
+            "confirm_expensive_model": .bool(confirmed)
+        ], timeout: .seconds(15))
+    }
+
+    func liveModels(refresh: Bool) async throws -> HermesModelCatalog? {
+        guard let runtimeID, socket != nil else { return nil }
+        do {
+            return try HermesModelCatalog(await call("model.options", [
+                "profile": .string(profile), "session_id": .string(runtimeID), "refresh": .bool(refresh)
+            ], timeout: .seconds(10)))
+        } catch HermesError.rpc(-32601, _) {
+            return nil
+        } catch HermesError.rpc(5098, _) {
+            throw HermesError.modelListNeedsRestart
+        }
+    }
+
+    private func resumeParams(_ key: String) -> [String: JSON] {
+        var params: [String: JSON] = ["profile": .string(profile), "session_id": .string(key),
+                                      "source": .string("gui"), "omit_messages": .bool(true)]
+        if !isCanonical { params["close_on_disconnect"] = .bool(false) }
+        return params
     }
 
     private func open() async throws {
@@ -75,24 +179,28 @@ final class HermesConversation {
         guard ready["method"].text == "event", ready["params"]["type"].text == "gateway.ready" else {
             throw HermesError.unsupported
         }
+        isCanonical = ready["params"]["payload"]["session_authority"].flag == true
+        usesLegacyModelChange = false
         startReader(task)
         startHeartbeat(task)
 
-        let profile = client.profile
+        let snapshot: JSON
         if let storedKey {
-            let reply = try await call("session.resume", ["profile": .string(profile), "session_id": .string(storedKey),
-                                                          "close_on_disconnect": .bool(false), "source": .string("gui"),
-                                                          "omit_messages": .bool(true)])
-            guard socket === task else { throw HermesError.socketClosed }
-            guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
-            runtimeID = runtime
+            snapshot = try await call("session.resume", resumeParams(storedKey), timeout: .seconds(20))
         } else {
-            let reply = try await call("session.create", ["profile": .string(profile), "source": .string("gui")])
-            guard socket === task else { throw HermesError.socketClosed }
-            guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
-            runtimeID = runtime
-            storedKey = reply["stored_session_id"].text ?? reply["info"]["stored_session_id"].text
+            var params: [String: JSON] = ["profile": .string(profile), "source": .string("gui")]
+            if let initialModel {
+                params["model"] = .string(initialModel.name)
+                params["provider"] = .string(initialModel.provider)
+            }
+            snapshot = try await call("session.create", params, timeout: .seconds(30))
         }
+        guard socket === task else { throw HermesError.socketClosed }
+        guard let runtime = snapshot["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
+        runtimeID = runtime
+        storedKey = storedKey ?? snapshot["stored_session_id"].text ?? snapshot["info"]["stored_session_id"].text
+        executionGeneration = snapshot["execution_generation"].int
+        readModel(snapshot["info"])
     }
 
     private func call(_ method: String, _ params: [String: JSON], timeout: Duration? = nil) async throws -> JSON {
@@ -159,7 +267,19 @@ final class HermesConversation {
         }
         guard let id = frame["id"].int, let continuation = pending.removeValue(forKey: id) else { return }
         if frame["error"] != .null {
-            continuation.resume(throwing: HermesError.server(frame["error"]["message"].text ?? "The server refused the request."))
+            let error = frame["error"]
+            let message = error["message"].text
+            let reason = error["data"]["reason"].text ?? message
+            if ["profile_mismatch", "profile_unavailable"].contains(reason) {
+                continuation.resume(throwing: HermesError.profileGone)
+            } else if ["revision_conflict", "stale_generation"].contains(reason) {
+                continuation.resume(throwing: HermesError.modelConflict)
+            } else {
+                let detail = error["data"]["detail"].text
+                    ?? (message?.contains("_") == false ? message : nil)
+                    ?? "The server refused the request."
+                continuation.resume(throwing: HermesError.rpc(error["code"].int, detail))
+            }
         } else {
             continuation.resume(returning: frame["result"])
         }
@@ -167,7 +287,8 @@ final class HermesConversation {
 
     private func apply(_ event: JSON) {
         if let session = event["session_id"].text, let runtimeID, session != runtimeID { return }
-        guard acceptsReplyEvents || ["session.info", "session.title"].contains(event["type"].text ?? "") else { return }
+        if let generation = event["execution_generation"].int { executionGeneration = generation }
+        guard acceptsReplyEvents || ["session.info", "session.title", "session.updated"].contains(event["type"].text ?? "") else { return }
         let payload = event["payload"]
         switch event["type"].text ?? "" {
         case "message.delta":
@@ -201,9 +322,16 @@ final class HermesConversation {
             if let title = payload["title"].text, !title.isEmpty { onTitle?(title) }
         case "session.info":
             if let key = payload["stored_session_id"].text, !key.isEmpty, storedKey == nil { storedKey = key }
+            readModel(payload)
+        case "session.updated":
+            if payload["operation"].text == "model" { readModel(payload) }
         default:
             break
         }
+    }
+
+    private func readModel(_ info: JSON) {
+        if let name = info["model"].text, !name.isEmpty { onModel?(name, info["provider"].text, false) }
     }
 
     /// Output tokens for the turn, if the host says. Hermes releases and providers name

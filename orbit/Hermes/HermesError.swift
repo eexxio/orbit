@@ -3,6 +3,8 @@ import Foundation
 enum HermesError: LocalizedError {
     case notConfigured, invalidAddress, notDashboard, wrongPassword, browserOnly
     case http(Int, String?), unsupported, socketClosed, server(String)
+    case rpc(Int?, String)
+    case modelListNeedsRestart, modelConflict, profileGone
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +17,10 @@ enum HermesError: LocalizedError {
         case .unsupported: return "The server sent a reply this app doesn't understand."
         case .socketClosed: return "The connection to the server was lost."
         case .server(let message): return message
+        case .rpc(_, let message): return message
+        case .modelListNeedsRestart: return "The Hermes server needs a restart to list models."
+        case .modelConflict: return "This chat changed on another device. Try again."
+        case .profileGone: return "This chat’s profile was removed on the server."
         }
     }
 }

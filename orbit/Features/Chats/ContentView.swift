@@ -6,27 +6,32 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var showSettings = false
 
-    @State private var startNewChat = false
-    @State private var newChatID = UUID()
+    @State private var path: [Destination] = []
+
+    private enum Destination: Hashable {
+        case existing(HermesSession)
+        case new(UUID, profile: String?)
+    }
 
     private var client: HermesClient { HermesClient.shared }
 
     var body: some View {
 
-        NavigationStack {
+        NavigationStack(path: $path) {
 
             List {
+                if let notice = client.profileNotice {
+                    Label(notice, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
 
                 ForEach(client.sessions.filter {
                     searchText.isEmpty ||
                     $0.title.localizedCaseInsensitiveContains(searchText)
                 }) { chat in
 
-                    NavigationLink(chat.title) {
-
-                        ChatInterfaceView(sessionKey: chat.id)
-                            .navigationBarTitleDisplayMode(.inline)
-                    }
+                    NavigationLink(chat.title, value: Destination.existing(chat))
                 }
             }
             .navigationTitle("Chats")
@@ -52,8 +57,7 @@ struct ContentView: View {
                 ToolbarItem(placement: .bottomBar) {
 
                     Button {
-                        newChatID = UUID()
-                        startNewChat = true
+                        startNewChat(in: nil)
                     } label: {
                         Image(systemName: "square.and.pencil")
                     }
@@ -61,10 +65,14 @@ struct ContentView: View {
                     .accessibilityIdentifier("chats.new")
                 }
             }
-            .navigationDestination(isPresented: $startNewChat) {
-                ChatInterfaceView()
-                    .id(newChatID)
-                    .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: Destination.self) { destination in
+                switch destination {
+                case .existing(let chat):
+                    ChatInterfaceView(session: chat, onNewChat: startNewChat)
+                case .new(let id, let profile):
+                    ChatInterfaceView(profile: profile, onNewChat: startNewChat)
+                        .id(id)
+                }
             }
             .task {
                 if client.isConfigured, client.state == .disconnected {
@@ -83,6 +91,11 @@ struct ContentView: View {
                 .presentationDragIndicator(.visible)
             }
         }
+    }
+
+    private func startNewChat(in profile: String?) {
+        if let profile { client.browse(profile) }
+        path = [.new(UUID(), profile: profile)]
     }
 }
 

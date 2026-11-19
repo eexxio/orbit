@@ -5,7 +5,7 @@ final class MessageActionsTests: XCTestCase {
     private var address: String { "http://127.0.0.1:18765/\(fixtureID)" }
 
     override func tearDown() async throws {
-        try await configure("rewind")
+        try await resetFixture()
         try await super.tearDown()
     }
 
@@ -28,34 +28,37 @@ final class MessageActionsTests: XCTestCase {
     }
 
     @MainActor
-    func testRegenerateReplacesReply() async throws {
+    func testRegenerateAppendsReply() async throws {
         let app = try await launchChat()
-        send("Replace reply", in: app)
-        waitForReply("Reply 1: Replace reply", in: app)
+        send("Repeat reply", in: app)
+        waitForReply("Reply 1: Repeat reply", in: app)
         openReplyMenu(in: app)
         app.buttons["message.action.regenerate"].tap()
-        waitForReply("Reply 2: Replace reply", in: app)
-        XCTAssertFalse(app.staticTexts["Reply 1: Replace reply"].exists)
-        try await assertHistory(["Replace reply", "Reply 2: Replace reply"])
+        waitForReply("Reply 2: Repeat reply", in: app)
+        XCTAssertTrue(app.staticTexts["Reply 1: Repeat reply"].exists)
+        screenshot("regenerated-turn")
+        try await assertHistory(["Repeat reply", "Reply 1: Repeat reply", "Repeat reply", "Reply 2: Repeat reply"])
     }
 
     @MainActor
-    func testEditReplacesLastTurn() async throws {
+    func testEditAppendsFromAnyUserMessage() async throws {
         let app = try await launchChat()
         send("Original prompt", in: app)
         waitForReply("Reply 1: Original prompt", in: app)
+        send("Later prompt", in: app)
+        waitForReply("Reply 1: Later prompt", in: app)
         openUserMenu(in: app)
+        XCTAssertEqual(app.buttons["message.action.edit"].label, "Edit as New Message")
         screenshot("user-context-menu")
         app.buttons["message.action.edit"].tap()
-        XCTAssertTrue(app.otherElements["chat.edit.banner"].waitForExistence(timeout: 5)
-                      || app.staticTexts["Editing message"].exists)
+        XCTAssertTrue(app.staticTexts["chat.edit.banner"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["New message from edit"].exists)
         screenshot("edit-mode")
         replaceComposer(with: "Edited prompt", in: app)
         XCTAssertEqual(app.buttons["chat.send"].label, "Send edit")
         app.buttons["chat.send"].tap()
         waitForReply("Reply 1: Edited prompt", in: app)
-        XCTAssertFalse(app.staticTexts["Reply 1: Original prompt"].exists)
-        try await assertHistory(["Edited prompt", "Reply 1: Edited prompt"])
+        try await assertHistory(["Original prompt", "Reply 1: Original prompt", "Later prompt", "Reply 1: Later prompt", "Edited prompt", "Reply 1: Edited prompt"])
     }
 
     @MainActor
@@ -75,23 +78,6 @@ final class MessageActionsTests: XCTestCase {
     }
 
     @MainActor
-    func testFailedRewindKeepsReplyAndRetrySucceeds() async throws {
-        let app = try await launchChat(mode: "fail-undo")
-        send("Keep old reply", in: app)
-        waitForReply("Reply 1: Keep old reply", in: app)
-        openReplyMenu(in: app)
-        app.buttons["message.action.regenerate"].tap()
-        XCTAssertTrue(app.staticTexts["chat.reply.failed"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Reply 1: Keep old reply"].exists)
-        XCTAssertTrue(app.staticTexts["Couldn't regenerate: The fixture refused to rewind."].exists)
-        screenshot("failed-rewind-retry")
-        try await assertHistory(["Keep old reply", "Reply 1: Keep old reply"])
-        app.buttons["chat.reply.retry"].tap()
-        waitForReply("Reply 2: Keep old reply", in: app)
-        try await assertHistory(["Keep old reply", "Reply 2: Keep old reply"])
-    }
-
-    @MainActor
     func testInlineRetryWithoutAssistantText() async throws {
         let app = try await launchChat()
         send("Action failure", in: app)
@@ -100,28 +86,21 @@ final class MessageActionsTests: XCTestCase {
         screenshot("failed-reply-retry")
         app.buttons["chat.reply.retry"].tap()
         waitForReply("Reply 2: Action failure", in: app)
-        try await assertHistory(["Action failure", "Reply 2: Action failure"])
+        try await assertHistory(["Action failure", "Action failure", "Reply 2: Action failure"])
     }
 
     @MainActor
-    func testFallbackEditAppendsAndRetryAppends() async throws {
-        let app = try await launchChat(mode: "fallback")
-        send("Fallback prompt", in: app)
-        waitForReply("Reply 1: Fallback prompt", in: app)
+    func testOnlyLastReplyCanRegenerate() async throws {
+        let app = try await launchChat()
+        send("Earlier prompt", in: app)
+        waitForReply("Reply 1: Earlier prompt", in: app)
+        send("Latest prompt", in: app)
+        waitForReply("Reply 1: Latest prompt", in: app)
         openReplyMenu(in: app)
         XCTAssertFalse(app.buttons["message.action.regenerate"].exists)
         app.buttons["message.action.copy"].tap()
-        openUserMenu(in: app)
-        XCTAssertEqual(app.buttons["message.action.edit"].label, "Edit as New Message")
-        screenshot("fallback-user-menu")
-        app.buttons["message.action.edit"].tap()
-        XCTAssertTrue(app.staticTexts["New message from edit"].exists)
-        replaceComposer(with: "Action failure", in: app)
-        app.buttons["chat.send"].tap()
-        XCTAssertTrue(app.staticTexts["chat.reply.failed"].waitForExistence(timeout: 10))
-        app.buttons["chat.reply.retry"].tap()
-        waitForReply("Reply 2: Action failure", in: app)
-        try await assertHistory(["Fallback prompt", "Reply 1: Fallback prompt", "Action failure", "Action failure", "Reply 2: Action failure"])
+        app.staticTexts["Reply 1: Latest prompt"].press(forDuration: 1)
+        XCTAssertTrue(app.buttons["message.action.regenerate"].waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -150,8 +129,8 @@ final class MessageActionsTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Run this turn again?"].waitForExistence(timeout: 5))
         app.buttons["Regenerate"].tap()
         waitForReply("Reply 2: Tools reply", in: app)
-        XCTAssertFalse(app.staticTexts["Reply 1: Tools reply"].exists)
-        try await assertHistory(["Tools reply", "Reply 2: Tools reply"])
+        XCTAssertTrue(app.staticTexts["Reply 1: Tools reply"].exists)
+        try await assertHistory(["Tools reply", "Reply 1: Tools reply", "Tools reply", "Reply 2: Tools reply"])
 
         send("Tools failure", in: app)
         XCTAssertTrue(app.staticTexts["chat.reply.failed"].waitForExistence(timeout: 10))
@@ -160,7 +139,7 @@ final class MessageActionsTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["This reply used a tool. Running it again may repeat what it did."].exists)
         app.buttons["Regenerate"].tap()
         waitForReply("Reply 2: Tools failure", in: app)
-        try await assertHistory(["Tools reply", "Reply 2: Tools reply", "Tools failure", "Reply 2: Tools failure"])
+        try await assertHistory(["Tools reply", "Reply 1: Tools reply", "Tools reply", "Reply 2: Tools reply", "Tools failure", "Tools failure", "Reply 2: Tools failure"])
 
         send("Two tools reply", in: app)
         waitForReply("Reply 1: Two tools reply", in: app)
@@ -172,9 +151,9 @@ final class MessageActionsTests: XCTestCase {
     }
 
     @MainActor
-    private func launchChat(mode: String = "rewind") async throws -> XCUIApplication {
+    private func launchChat() async throws -> XCUIApplication {
         continueAfterFailure = false
-        try await configure(mode)
+        try await resetFixture()
         let app = XCUIApplication()
         app.launchArguments = ["-hermes.address", address, "-hermes.theme", "light", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
@@ -183,8 +162,8 @@ final class MessageActionsTests: XCTestCase {
         return app
     }
 
-    private func configure(_ mode: String) async throws {
-        var request = URLRequest(url: URL(string: "\(address)/fixture/reset/\(mode)")!)
+    private func resetFixture() async throws {
+        var request = URLRequest(url: URL(string: "\(address)/fixture/reset")!)
         request.httpMethod = "POST"
         let (_, response) = try await URLSession.shared.data(for: request)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 204)

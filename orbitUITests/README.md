@@ -22,8 +22,6 @@ fixed streaming delays. Screenshots are attached to the test result bundle.
 Each test uses its own UUID URL prefix (`http://127.0.0.1:18765/<fixture-id>`).
 The fixture paths below are relative to that prefix.
 
-`MessageActionsTests` resets the fixture between tests with `POST /fixture/reset/rewind`,
-`/fixture/reset/fallback` (no undo support), or `/fixture/reset/fail-undo` (one failed undo).
-The fixture also accepts `--no-undo` and `--fail-undo-once` for manual checks.
+`MessageActionsTests` resets the fixture between tests with `POST /fixture/reset`.
 `GET /api/sessions/fixture/messages` exposes the stored transcript used to verify that
-rewinding replaces the server's turn while fallback editing appends a turn.
+regenerating, retrying, and editing append new turns while keeping the earlier history.

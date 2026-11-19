@@ -36,7 +36,7 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertTrue(composer(in: app).waitForExistence(timeout: 5))
         screenshot("new-chat-after-\(status)")
         XCTAssertTrue(app.staticTexts["New chat"].waitForExistence(timeout: 5))
-        XCTAssertFalse(reply(prompt, in: app).exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label == %@", "You: \(prompt)")).firstMatch.exists)
         XCTAssertFalse(reply(partial, in: app).exists)
         XCTAssertFalse(reply(partial + " and the ending.", in: app).exists)
         XCTAssertEqual(composer(in: app).value as? String, "")
@@ -250,7 +250,7 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertEqual(field.value as? String, text)
         XCTAssertTrue(button.isEnabled)
         button.tap()
-        let sent = reply(text, in: app)
+        let sent = app.staticTexts.matching(NSPredicate(format: "label == %@", "You: \(text)")).firstMatch
         if !sent.waitForExistence(timeout: 2), field.value as? String == text, button.isEnabled {
             button.tap()
         }

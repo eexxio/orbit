@@ -19,6 +19,12 @@ final class LiveChat {
     private(set) var key: String?
     var messages: [ChatMessage] = []
     private(set) var replyState: ReplyState = .idle
+    var isIdle: Bool { !isGenerating && !isLoadingHistory && !isShutDown }
+    var lastUserID: UUID? { messages.last(where: \.isUser)?.id }
+    var lastReplyToolCount: Int {
+        guard let index = messages.lastIndex(where: \.isUser) else { return 0 }
+        return messages.suffix(from: index + 1).filter { $0.tool != nil }.count
+    }
     var isGenerating: Bool { replyState.isActive }
     /// True while an existing chat's history loads and nothing is cached to show.
     private(set) var isLoadingHistory = false
@@ -34,6 +40,7 @@ final class LiveChat {
     /// When the current reply's first word arrived, for its tokens-per-second rate.
     @ObservationIgnored private var streamStart: Date?
     @ObservationIgnored private var loadedHistory = false
+    private var isShutDown = false
     @ObservationIgnored private var conversation: HermesConversation?
     @ObservationIgnored private var latestPromptID: UUID?
     @ObservationIgnored private var pendingInterrupt: Task<Void, Never>?
@@ -41,7 +48,7 @@ final class LiveChat {
     init(key: String?) { self.key = key }
 
     func loadHistory() async {
-        guard !loadedHistory else { return }
+        guard !loadedHistory, !isShutDown else { return }
         loadedHistory = true
         guard let key else { return }
         let client = HermesClient.shared
@@ -56,12 +63,14 @@ final class LiveChat {
 
         do {
             let fresh = try await client.messages(for: key)
+            guard !isShutDown else { return }
             // Don't clobber a turn the user started while this loaded.
             guard latestPromptID == nil else { return }
             if fresh != messages.map(\.item) {
                 messages = fresh.map(ChatMessage.init)
             }
         } catch {
+            guard !isShutDown else { return }
             // Offline with a cached copy: keep showing it.
             if messages.isEmpty {
                 messages.append(ChatMessage(text: "⚠️ \(error.localizedDescription)", isUser: false))
@@ -70,7 +79,7 @@ final class LiveChat {
     }
 
     func send(_ text: String) {
-        guard !isGenerating else { return }
+        guard !isGenerating, !isShutDown else { return }
         let prompt = ChatMessage(text: text, isUser: true)
         messages.append(prompt)
         latestPromptID = prompt.id
@@ -107,6 +116,11 @@ final class LiveChat {
         }
     }
 
+    func regenerate() {
+        guard isIdle, let prompt = messages.last(where: \.isUser)?.text else { return }
+        send(prompt)
+    }
+
     /// A new chat learns its key from the host; from then on reopening it from the list finds this object.
     private func adoptKey(_ stored: String?) {
         guard key == nil, let stored else { return }
@@ -124,6 +138,7 @@ final class LiveChat {
 
     /// Ends the turn without waiting for the host, for a sign-out or a server change.
     func shutDown() {
+        isShutDown = true
         conversation?.close()
         conversation = nil
         if isGenerating { finishTurn(as: .idle) }

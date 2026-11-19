@@ -13,14 +13,24 @@ struct ChatInterfaceView: View {
         _chat = State(initialValue: HermesClient.shared.liveChat(for: sessionKey))
     }
 
-    @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
+    @AppStorage(AppearanceKey.accent) var accent = Accent.mono
     @AppStorage(AppearanceKey.showToolCalls) private var showToolCalls = true
-    @State private var chat: LiveChat
+    @State var chat: LiveChat
     @State private var scrollPosition = ScrollPosition()
-    @State private var draft = ""
+    @State var draft = ""
+    @State var composerSelection: TextSelection?
+    @State var editingID: UUID?
+    @State var stashedDraft: String?
+    @State var selectedText: SelectedMessageText?
+    @State var sharedText: SelectedMessageText?
+    @State var confirmsRegeneration = false
+    @State var confirmationMessageID: UUID?
+    @State var copyCount = 0
+    @State var regenerateCount = 0
+    @State var rowWidth: CGFloat = 320
     @State private var stopCount = 0
 
-    @FocusState private var composerIsFocused: Bool
+    @FocusState var composerIsFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -35,14 +45,26 @@ struct ChatInterfaceView: View {
             }
             .background(Color(uiColor: .systemBackground))
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                composer
+                VStack(spacing: 8) {
+                    if editingID != nil { editBanner }
+                    composer
+                }
             }
         }
         .task { await chat.loadHistory() }
         .task { await focusComposerForNewChat() }
         .onAppear { chat.isOnScreen = true }
         // Only lets the chat go if no turn is running; otherwise it finishes in the background.
-        .onDisappear { chat.isOnScreen = false }
+        .onDisappear {
+            endEditing()
+            chat.isOnScreen = false
+        }
+        .onChange(of: chat.messages.map(\.id)) { validateEditing() }
+        .onChange(of: chat.isIdle) { validateEditing() }
+        .sheet(item: $selectedText) { SelectMessageTextSheet(text: $0.text) }
+        .sheet(item: $sharedText) { MessageShareSheet(text: $0.text) }
+        .sensoryFeedback(.success, trigger: copyCount)
+        .sensoryFeedback(.impact(weight: .light), trigger: regenerateCount)
     }
 
     // MARK: - Loading State
@@ -111,6 +133,7 @@ struct ChatInterfaceView: View {
                     // Hidden tool calls stay in `messages`, so the cache and the toggle keep them.
                     ForEach(showToolCalls ? chat.messages : chat.messages.filter { $0.tool == nil }) { message in
                         messageRow(message, copyText: copies[message.id], isCompletedReply: message.id == completedID)
+                            .transition(.opacity)
                     }
 
                     replyStatus
@@ -140,6 +163,7 @@ struct ChatInterfaceView: View {
                 pinToBottom()
             }
             .onAppear { pinToBottom() }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rowWidth = $0 - 36 }
             // A loaded or refreshed history, a sent message, and each streamed word.
             .onChange(of: scrollToken) { pinToBottom() }
         }
@@ -162,7 +186,7 @@ struct ChatInterfaceView: View {
 
     /// One copy button per agent reply, under its last text segment, copying all of the reply's
     /// text. A reply still streaming gets none until it finishes.
-    private var replyCopies: [UUID: String] {
+    var replyCopies: [UUID: String] {
         var copies: [UUID: String] = [:]
         var segments: [ChatMessage] = []
         func close() {
@@ -179,7 +203,7 @@ struct ChatInterfaceView: View {
     // MARK: - Message Row
 
     @ViewBuilder
-    private func messageRow(_ message: ChatMessage, copyText: String?, isCompletedReply: Bool) -> some View {
+    func messageRow(_ message: ChatMessage, copyText: String?, isCompletedReply: Bool) -> some View {
         if message.role == "reasoning" {
             ReasoningRow(text: message.text, isLive: message.id == chat.reasoningID)
         } else if let tool = message.tool {
@@ -196,20 +220,28 @@ struct ChatInterfaceView: View {
                         accent.color,
                         in: RoundedRectangle(cornerRadius: 20)
                     )
+                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("You: \(message.text)")
+                    .accessibilityIdentifier("chat.message.user")
+                    .modifier(actions(for: .user(message)))
             }
         } else {
             VStack(alignment: .leading, spacing: 12) {
                 // Full block-level Markdown: headings, lists, code blocks, quotes, tables.
                 Markdown(message.text)
                     .markdownTheme(.basic)
-                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("chat.message.reply")
+                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20))
+                    .modifier(actions(for: .reply(segment: message, replyText: replyText(for: message))))
+                    .modifier(regenerationConfirmation(for: message.id))
 
                 if copyText != nil || message.rate != nil {
                     HStack(spacing: 20) {
                         if let copyText {
                             Button {
-                                UIPasteboard.general.string = copyText
+                                copyMessage(copyText)
                             } label: {
                                 Image(systemName: "doc.on.doc")
                             }
@@ -237,7 +269,7 @@ struct ChatInterfaceView: View {
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
             // Grows with its text up to six lines, then scrolls.
-            TextField("Ask anything", text: $draft, axis: .vertical)
+            TextField("Ask anything", text: $draft, selection: $composerSelection, axis: .vertical)
                 .focused($composerIsFocused)
                 .lineLimit(1...6)
                 .padding(.vertical, 11)
@@ -265,7 +297,7 @@ struct ChatInterfaceView: View {
             .animation(.default, value: canSend)
             .animation(.snappy(duration: 0.2), value: chat.isGenerating)
             .sensoryFeedback(.impact(weight: .medium), trigger: stopCount)
-            .accessibilityLabel(chat.isGenerating ? "Stop reply" : "Send")
+            .accessibilityLabel(chat.isGenerating ? "Stop reply" : (editingID == nil ? "Send" : "Send edit"))
             .accessibilityIdentifier(chat.isGenerating ? "chat.stop" : "chat.send")
             .keyboardShortcut(chat.isGenerating ? KeyboardShortcut(".", modifiers: .command) : nil)
             .padding(.bottom, 7)
@@ -277,7 +309,7 @@ struct ChatInterfaceView: View {
         .frame(maxWidth: composerIsCollapsed ? 240 : .infinity)
         .contentShape(.rect)
         .onTapGesture { composerIsFocused = true }
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
         .animation(.spring(duration: 0.4, bounce: 0.2), value: composerIsCollapsed)
@@ -301,6 +333,7 @@ struct ChatInterfaceView: View {
 
         guard canSend else { return }
 
+        endEditing()
         draft = ""
         composerIsFocused = false
         chat.send(text)
@@ -346,7 +379,8 @@ struct ChatInterfaceView: View {
     }
 
     private func replyIssue(_ title: String, detail: String, identifier: String) -> some View {
-        Label {
+        HStack(alignment: .top) {
+          Label {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .fontWeight(.semibold)
@@ -360,6 +394,18 @@ struct ChatInterfaceView: View {
                 .accessibilityHidden(true)
         }
         .font(.subheadline)
+          if chat.isIdle && chat.lastUserID != nil {
+              Spacer(minLength: 4)
+              Button("Retry", systemImage: "arrow.clockwise") {
+                  requestRegeneration()
+              }
+              .buttonStyle(.bordered)
+              .controlSize(.small)
+              .tint(.secondary)
+              .accessibilityIdentifier("chat.reply.retry")
+          }
+        }
+        .modifier(regenerationConfirmation(for: nil))
     }
 
     /// Something is on its way but no row shows it yet. A running tool row has its own spinner.

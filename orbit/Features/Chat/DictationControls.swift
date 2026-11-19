@@ -6,13 +6,14 @@ struct DictateButton: View {
     let toggle: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Button(action: toggle) {
             ZStack {
                 if dictation.phase == .listening {
                     Circle()
-                        .fill(accent.color)
+                        .fill(recordingFill)
                         .frame(width: 30, height: 30)
                 }
                 if dictation.phase == .preparing || dictation.phase == .finishing {
@@ -38,6 +39,11 @@ struct DictateButton: View {
         .accessibilityHint(dictation.phase == .idle ? "Speak to type a message" : "")
         .accessibilityIdentifier(identifier)
         .keyboardShortcut("d", modifiers: [.command, .option])
+    }
+
+    private var recordingFill: Color {
+        guard accent == .mono else { return accent.color }
+        return colorScheme == .dark ? .white : .black
     }
 
     private var label: LocalizedStringKey {

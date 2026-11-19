@@ -9,24 +9,25 @@ struct DictateButton: View {
 
     var body: some View {
         Button(action: toggle) {
-            Group {
-                switch dictation.phase {
-                case .preparing, .finishing:
-                    ProgressView().controlSize(.mini)
-                case .listening:
-                    Image(systemName: "waveform")
-                        .foregroundStyle(accent.onColor)
-                        .symbolEffect(.variableColor.iterative, isActive: !reduceMotion)
+            ZStack {
+                if dictation.phase == .listening {
+                    Circle()
+                        .fill(accent.color)
                         .frame(width: 30, height: 30)
-                        .background(accent.color, in: .circle)
-                default:
-                    Image(systemName: "mic").foregroundStyle(.secondary)
+                }
+                if dictation.phase == .preparing || dictation.phase == .finishing {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    let listening = dictation.phase == .listening
+                    Image(systemName: listening ? "waveform" : "mic")
+                        .foregroundStyle(listening ? accent.onColor : Color.secondary)
+                        .symbolEffect(.variableColor.iterative, isActive: listening && !reduceMotion)
+                        .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace.downUp))
                 }
             }
             .font(.body)
             .frame(width: 44, height: 44)
             .contentShape(.rect)
-            .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace.downUp))
         }
         .buttonStyle(.plain)
         .padding(.horizontal, -7)

@@ -25,6 +25,7 @@ struct HermesAttachmentRef: Codable, Hashable, Sendable {
     var kind: String
     var name: String
     var thumbnail: Data? = nil
+    var byteCount: Int? = nil
 }
 
 struct HermesToolCall: Codable, Hashable, Sendable {

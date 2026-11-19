@@ -16,7 +16,7 @@ struct DraftAttachment: Identifiable, Equatable {
         guard let payload else { return nil }
         return OutgoingAttachment(kind: kind, name: name, mime: uti.preferredMIMEType ?? "application/octet-stream", payload: payload)
     }
-    var descriptor: HermesAttachmentRef { HermesAttachmentRef(kind: kind.rawValue, name: name, thumbnail: preview) }
+    var descriptor: HermesAttachmentRef { HermesAttachmentRef(kind: kind.rawValue, name: name, thumbnail: preview, byteCount: byteCount) }
 }
 
 extension UTType {
@@ -104,16 +104,18 @@ struct AttachmentTray: View {
                 }
             }
             .onTapGesture { if case .failed = item.phase { failed = item } }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(item.kind == .image ? "Photo" : "File"), \(item.name), \(phaseLabel(item.phase))")
+            .accessibilityAction(named: "Remove \(item.name)") { remove(item) }
             Button { remove(item) } label: {
                 Image(systemName: "xmark.circle.fill").font(.system(size: 20)).symbolRenderingMode(.palette)
                     .foregroundStyle(.white, Color.black.opacity(0.6)).frame(width: 44, height: 44).contentShape(.rect)
             }
             .offset(x: 8, y: -8)
+            .accessibilityLabel("Remove \(item.name)")
             .accessibilityIdentifier("chat.tray.remove")
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.kind == .image ? "Photo" : "File"), \(item.name), \(phaseLabel(item.phase))")
-        .accessibilityAction(named: "Remove") { remove(item) }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.tray.item")
     }
 

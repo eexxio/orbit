@@ -32,13 +32,19 @@ struct MessageAttachmentsView: View {
                 }.frame(width: 220)
             }
             ForEach(Array(attachments.filter { $0.kind != "image" || $0.thumbnail == nil }.enumerated()), id: \.offset) { _, ref in
-                Label(ref.name, systemImage: ref.kind == "image" ? "photo" : (UTType(filenameExtension: (ref.name as NSString).pathExtension) ?? .data).attachmentSymbol)
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(ref.name, systemImage: ref.kind == "image" ? "photo" : (UTType(filenameExtension: (ref.name as NSString).pathExtension) ?? .data).attachmentSymbol)
+                    if ref.kind == "file", let byteCount = ref.byteCount {
+                        Text(Int64(byteCount), format: .byteCount(style: .file)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                     .font(.subheadline).padding(.horizontal, 12).padding(.vertical, 8)
                     .background(Color.secondary.opacity(0.12), in: .rect(cornerRadius: 14))
                     .contextMenu { Button("Copy Name") { UIPasteboard.general.string = ref.name } }
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(ref.kind == "image" ? "Photo" : "File") you sent, \(ref.name)")
                     .accessibilityIdentifier("chat.message.attachment")
+                    .accessibilityValue(ref.byteCount.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? "")
             }
         }
         .fullScreenCover(isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) {

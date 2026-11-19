@@ -14,6 +14,9 @@ struct AttachmentPicker: View {
     @State private var added = 0
     @State private var showsCamera = false
     @State private var retryActions: [UUID: () -> Void] = [:]
+    @State private var batches: [UUID: Set<UUID>] = [:]
+    @State private var batchPhotos: [UUID: Int] = [:]
+    @State private var batchFiles: [UUID: [String]] = [:]
 
     var body: some View {
         pickerMenu
@@ -22,16 +25,18 @@ struct AttachmentPicker: View {
             .onChange(of: attachments.map(\.id)) {
                 let ids = Set(attachments.map(\.id))
                 retryActions = retryActions.filter { ids.contains($0.key) }
+                for removed in Set(batches.values.flatMap { $0 }).subtracting(ids) { finishItem(removed) }
             }
             .fileImporter(isPresented: $showsFiles, allowedContentTypes: [.item], allowsMultipleSelection: true, onCompletion: loadFiles)
             .sensoryFeedback(.selection, trigger: added)
             .sensoryFeedback(.warning, trigger: failures)
             .fullScreenCover(isPresented: $showsCamera) {
-                CameraPicker { data in add(data: data, name: "Camera.jpg", image: true) }
+                CameraPicker { data in addImages([data], name: "Camera.jpg") }
             }
             .onReceive(NotificationCenter.default.publisher(for: .retryAttachment)) { notification in
                 guard let id = notification.object as? UUID, let index = attachments.firstIndex(where: { $0.id == id }) else { return }
                 attachments[index].phase = .preparing
+                batches[UUID()] = [id]
                 retryActions[id]?()
             }
     }
@@ -39,19 +44,17 @@ struct AttachmentPicker: View {
     private var pickerMenu: some View {
         Menu {
             Group {
-            Button("Photo Library", systemImage: "photo.on.rectangle") { showsPhotos = true }
-                .accessibilityIdentifier("chat.attach.library")
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 Button("Take Photo", systemImage: "camera") { showsCamera = true }
                     .accessibilityIdentifier("chat.attach.camera")
             }
+            Button("Photo Library", systemImage: "photo.on.rectangle") { showsPhotos = true }
+                .accessibilityIdentifier("chat.attach.library")
             Button("Choose File", systemImage: "folder") { showsFiles = true }
                 .accessibilityIdentifier("chat.attach.files")
             if hasPasteImage {
                 Button("Paste Image", systemImage: "doc.on.clipboard") {
-                    for image in UIPasteboard.general.images ?? [] {
-                        if let data = image.pngData() { add(data: data, name: "Pasted image.png", image: true) }
-                    }
+                    addImages((UIPasteboard.general.images ?? []).compactMap { $0.pngData() }, name: "Pasted image.png")
                 }.accessibilityIdentifier("chat.attach.paste")
             }
             }.disabled(attachments.count >= 10)
@@ -70,8 +73,10 @@ struct AttachmentPicker: View {
     private func loadPhotos() {
         let selected = photos
         photos = []
+        var ids: Set<UUID> = []
         for photo in selected {
             guard let id = placeholder(name: "Photo", image: true) else { break }
+            ids.insert(id)
             let load = {
                 Task { @MainActor in
                     do {
@@ -83,13 +88,16 @@ struct AttachmentPicker: View {
             retryActions[id] = { _ = load() }
             _ = load()
         }
+        if !ids.isEmpty { batches[UUID()] = ids }
         focus()
     }
 
     private func loadFiles(_ result: Result<[URL], Error>) {
         do {
+            var ids: Set<UUID> = []
             for url in try result.get() {
                 guard let id = placeholder(name: url.lastPathComponent, image: false) else { break }
+                ids.insert(id)
                 let load = {
                     Task { @MainActor in
                         do { complete(id, try await Task.detached { try AttachmentPreparation.file(url) }.value) }
@@ -99,6 +107,7 @@ struct AttachmentPicker: View {
                 retryActions[id] = { _ = load() }
                 _ = load()
             }
+            if !ids.isEmpty { batches[UUID()] = ids }
             focus()
         } catch { self.error = error.localizedDescription }
     }
@@ -114,10 +123,15 @@ struct AttachmentPicker: View {
         return item.id
     }
 
-    private func add(data: Data, name: String, image: Bool) {
-        guard let id = placeholder(name: name, image: image) else { return }
-        retryActions[id] = { Task { await prepare(id: id, data: data, name: name, image: image) } }
-        retryActions[id]?()
+    private func addImages(_ images: [Data], name: String) {
+        var ids: Set<UUID> = []
+        for data in images {
+            guard let id = placeholder(name: name, image: true) else { break }
+            ids.insert(id)
+            retryActions[id] = { Task { await prepare(id: id, data: data, name: name, image: true) } }
+            retryActions[id]?()
+        }
+        if !ids.isEmpty { batches[UUID()] = ids }
         focus()
     }
 
@@ -127,7 +141,7 @@ struct AttachmentPicker: View {
     }
 
     private func complete(_ id: UUID, _ prepared: AttachmentPreparation.Prepared) {
-        guard let index = attachments.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = attachments.firstIndex(where: { $0.id == id }) else { finishItem(id); return }
         guard attachments.reduce(0, { $0 + $1.byteCount }) + prepared.outgoing.payload.count <= 50 * 1024 * 1024 else {
             fail(id, "Attachments must total 50 MB or less")
             return
@@ -141,15 +155,33 @@ struct AttachmentPicker: View {
         attachments[index].preview = prepared.preview
         attachments[index].phase = .ready
         error = nil
-        added += 1
-        AccessibilityNotification.Announcement(prepared.outgoing.kind == .image ? "Photo added" : "\(prepared.outgoing.name) added").post()
+        finishItem(id, photo: prepared.outgoing.kind == .image, name: prepared.outgoing.name)
     }
 
     private func fail(_ id: UUID, _ reason: String) {
+        defer { finishItem(id) }
         guard let index = attachments.firstIndex(where: { $0.id == id }) else { return }
         attachments[index].phase = .failed(reason)
         error = reason
         failures += 1
+    }
+
+    private func finishItem(_ id: UUID, photo: Bool? = nil, name: String = "") {
+        guard let batch = batches.first(where: { $0.value.contains(id) })?.key else { return }
+        if photo == true { batchPhotos[batch, default: 0] += 1 }
+        if photo == false { batchFiles[batch, default: []].append(name) }
+        batches[batch]?.remove(id)
+        guard batches[batch]?.isEmpty == true else { return }
+        batches.removeValue(forKey: batch)
+        let photos = batchPhotos.removeValue(forKey: batch) ?? 0
+        let files = batchFiles.removeValue(forKey: batch) ?? []
+        guard photos + files.count > 0 else { return }
+        added += 1
+        let message: String
+        if files.isEmpty { message = photos == 1 ? "Photo added" : "\(photos) photos added" }
+        else if photos == 0 { message = files.count == 1 ? "\(files[0]) added" : "\(files.count) files added" }
+        else { message = "\(photos + files.count) attachments added" }
+        AccessibilityNotification.Announcement(message).post()
     }
 }
 

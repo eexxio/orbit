@@ -21,11 +21,13 @@
   ],
   "files": [
     { "kind": "folder", "path": "orbit", "target-membership": [ "orbit" ] },
+    { "kind": "folder", "path": "orbitUITests/Tests", "target-membership": [ "orbitUITests" ] },
     {
       "kind": "group",
       "name": "Products",
       "children": [
         { "path": "<PRODUCTS>/orbit.app", "id": "000000000000000000000120", "type": "wrapper.application", "index": false },
+        { "path": "<PRODUCTS>/orbitUITests.xctest", "type": "wrapper.cfbundle", "index": false },
       ],
     },
   ],
@@ -84,6 +86,28 @@
         "SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY": "YES",
         "SWIFT_VERSION": "5.0",
         "TARGETED_DEVICE_FAMILY": "1,2,7",
+      },
+    },
+    {
+      "name": "orbitUITests",
+      "id": "000000000000000100000001",
+      "product": "Products/orbitUITests.xctest",
+      "product-type": "bundle.ui-testing",
+      "build-phases": [
+        "compile-sources",
+        "frameworks",
+        "resources",
+      ],
+      "dependencies": [ "orbit" ],
+      "build-settings": {
+        "GENERATE_INFOPLIST_FILE": "YES",
+        "PRODUCT_BUNDLE_IDENTIFIER": "app.orbit.chat.t57W5S7S5C8.uitests",
+        "PRODUCT_NAME": "$(TARGET_NAME)",
+        "SDKROOT": "iphoneos",
+        "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator",
+        "SWIFT_VERSION": "5.0",
+        "TARGETED_DEVICE_FAMILY": "1,2",
+        "TEST_TARGET_NAME": "orbit",
       },
     },
   ],

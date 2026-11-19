@@ -44,17 +44,21 @@ struct ReasoningRow: View {
 /// One tool call as a compact line: its name, what it ran on, and its result summary.
 struct ToolCallRow: View {
     let tool: HermesToolCall
+    let isLive: Bool
 
     var body: some View {
         HStack(spacing: 8) {
             Group {
                 if tool.isDone {
                     Image(systemName: "checkmark.circle")
-                } else {
+                } else if isLive {
                     ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "exclamationmark.circle")
                 }
             }
             .frame(width: 16)
+            .accessibilityHidden(true)
 
             Text(tool.name)
                 .font(.footnote.monospaced().weight(.medium))
@@ -79,5 +83,6 @@ struct ToolCallRow: View {
         .padding(.vertical, 6)
         .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 10))
         .accessibilityElement(children: .combine)
+        .accessibilityValue(tool.isDone ? "Completed" : isLive ? "Running" : "Tool result not received")
     }
 }

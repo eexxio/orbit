@@ -104,21 +104,15 @@ struct ChatInterfaceView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
                     let copies = replyCopies
+                    let completedID = chat.replyState == .completed
+                        ? chat.messages.reversed().prefix(while: { !$0.isUser }).first(where: { $0.role == "assistant" })?.id
+                        : nil
                     // Hidden tool calls stay in `messages`, so the cache and the toggle keep them.
                     ForEach(showToolCalls ? chat.messages : chat.messages.filter { $0.tool == nil }) { message in
-                        messageRow(message, copyText: copies[message.id])
+                        messageRow(message, copyText: copies[message.id], isCompletedReply: message.id == completedID)
                     }
 
-                    if showsWaitingIndicator {
-                        // Styled like a live thinking row, so the wait and the thinking read as one thing.
-                        HStack(spacing: 6) {
-                            Image(systemName: "brain")
-                                .symbolEffect(.pulse)
-                            Text("Thinking…")
-                        }
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    }
+                    replyStatus
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 8)
@@ -160,7 +154,7 @@ struct ChatInterfaceView: View {
 
     /// Changes whenever the newest content changes, so the view follows it to the bottom.
     private var scrollToken: String {
-        "\(chat.messages.count)|\(chat.messages.last?.text.count ?? 0)|\(chat.isGenerating)"
+        "\(chat.messages.count)|\(chat.messages.last?.text.count ?? 0)|\(chat.replyState)"
     }
 
     /// One copy button per agent reply, under its last text segment, copying all of the reply's
@@ -182,11 +176,11 @@ struct ChatInterfaceView: View {
     // MARK: - Message Row
 
     @ViewBuilder
-    private func messageRow(_ message: ChatMessage, copyText: String?) -> some View {
+    private func messageRow(_ message: ChatMessage, copyText: String?, isCompletedReply: Bool) -> some View {
         if message.role == "reasoning" {
             ReasoningRow(text: message.text, isLive: message.id == chat.reasoningID)
         } else if let tool = message.tool {
-            ToolCallRow(tool: tool)
+            ToolCallRow(tool: tool, isLive: chat.liveToolIDs.contains(message.id))
         } else if message.isUser {
             HStack {
                 Spacer(minLength: 48)
@@ -217,6 +211,7 @@ struct ChatInterfaceView: View {
                                 Image(systemName: "doc.on.doc")
                             }
                             .accessibilityLabel("Copy reply")
+                            .accessibilityIdentifier("chat.reply.completed", isEnabled: isCompletedReply)
                         }
 
                         if let rate = message.rate {
@@ -243,6 +238,7 @@ struct ChatInterfaceView: View {
                 .focused($composerIsFocused)
                 .lineLimit(1...6)
                 .padding(.vertical, 11)
+                .accessibilityIdentifier("chat.composer")
 
             Button {
                 sendMessage()
@@ -258,6 +254,7 @@ struct ChatInterfaceView: View {
             .disabled(!canSend)
             .animation(.default, value: canSend)
             .accessibilityLabel("Send")
+            .accessibilityIdentifier("chat.send")
             .padding(.bottom, 7)
         }
         .padding(.leading, 16)
@@ -279,7 +276,7 @@ struct ChatInterfaceView: View {
     }
 
     private var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !chat.isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     // MARK: - Send Message
@@ -289,16 +286,63 @@ struct ChatInterfaceView: View {
             in: .whitespacesAndNewlines
         )
 
-        guard !text.isEmpty else { return }
+        guard canSend else { return }
 
         draft = ""
         composerIsFocused = false
         chat.send(text)
     }
 
+    @ViewBuilder
+    private var replyStatus: some View {
+        switch chat.replyState {
+        case .waiting where showsWaitingIndicator:
+            HStack(spacing: 6) {
+                Image(systemName: "brain")
+                    .symbolEffect(.pulse)
+                    .accessibilityHidden(true)
+                Text("Thinking…")
+                    .accessibilityIdentifier("chat.reply.waiting")
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        case .streaming:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini).accessibilityHidden(true)
+                Text("Replying…")
+                    .accessibilityIdentifier("chat.reply.streaming")
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        case .interrupted(let detail):
+            replyIssue("Reply interrupted", detail: detail, identifier: "chat.reply.interrupted")
+        case .failed(let detail):
+            replyIssue("Reply failed", detail: detail, identifier: "chat.reply.failed")
+        default:
+            EmptyView()
+        }
+    }
+
+    private func replyIssue(_ title: String, detail: String, identifier: String) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .fontWeight(.semibold)
+                    .accessibilityIdentifier(identifier)
+                Text(detail)
+                    .foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: "exclamationmark.circle")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+        }
+        .font(.subheadline)
+    }
+
     /// Something is on its way but no row shows it yet. A running tool row has its own spinner.
     private var showsWaitingIndicator: Bool {
-        guard chat.isGenerating, chat.streamingID == nil, chat.reasoningID == nil else { return false }
+        guard chat.reasoningID == nil else { return false }
         return !(showToolCalls && chat.messages.last?.tool?.isDone == false)
     }
 

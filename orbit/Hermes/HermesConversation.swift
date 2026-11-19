@@ -9,13 +9,15 @@ final class HermesConversation {
     private var socket: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
     private var heartbeat: Task<Void, Never>?
+    private var connectionID = UUID()
     private var nextID = 0
     private var pending: [Int: CheckedContinuation<JSON, Error>] = [:]
 
     var onDelta: ((String) -> Void)?
-    /// The final text, and the output-token count when the host reports usage.
-    var onComplete: ((String?, Int?) -> Void)?
+    /// Final text, output-token count, and an error if the host only produced a partial reply.
+    var onComplete: ((String?, Int?, String?) -> Void)?
     var onError: ((String) -> Void)?
+    var onDisconnect: (() -> Void)?
     var onTitle: ((String) -> Void)?
     /// Reply text sealed before a tool call; `alreadyStreamed` means it came as deltas too.
     var onInterim: ((_ text: String, _ alreadyStreamed: Bool) -> Void)?
@@ -29,7 +31,9 @@ final class HermesConversation {
     init(storedKey: String?) { self.storedKey = storedKey }
 
     func close() {
+        connectionID = UUID()
         reader?.cancel(); heartbeat?.cancel()
+        reader = nil; heartbeat = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil; runtimeID = nil
         failPending(HermesError.socketClosed)
@@ -49,7 +53,9 @@ final class HermesConversation {
 
     private func open() async throws {
         close()
+        let opening = connectionID
         let (upgrade, session) = try await client.gatewayUpgrade()
+        guard connectionID == opening else { throw HermesError.socketClosed }
         let task = session.webSocketTask(with: upgrade)
         task.maximumMessageSize = 16 * 1024 * 1024
         task.resume()
@@ -57,6 +63,7 @@ final class HermesConversation {
 
         // Handshake: the host's first frame is the `gateway.ready` event.
         let ready = try await Self.receive(task)
+        guard socket === task else { throw HermesError.socketClosed }
         guard ready["method"].text == "event", ready["params"]["type"].text == "gateway.ready" else {
             throw HermesError.unsupported
         }
@@ -68,10 +75,12 @@ final class HermesConversation {
             let reply = try await call("session.resume", ["profile": .string(profile), "session_id": .string(storedKey),
                                                           "close_on_disconnect": .bool(false), "source": .string("gui"),
                                                           "omit_messages": .bool(true)])
+            guard socket === task else { throw HermesError.socketClosed }
             guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
             runtimeID = runtime
         } else {
             let reply = try await call("session.create", ["profile": .string(profile), "source": .string("gui")])
+            guard socket === task else { throw HermesError.socketClosed }
             guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
             runtimeID = runtime
             storedKey = reply["stored_session_id"].text ?? reply["info"]["stored_session_id"].text
@@ -99,13 +108,13 @@ final class HermesConversation {
             do {
                 while !Task.isCancelled {
                     let frame = try await Self.receive(task)
-                    self?.consume(frame)
+                    guard let self, self.socket === task else { return }
+                    self.consume(frame)
                 }
             } catch {
                 guard let self, self.socket === task else { return }
-                self.socket = nil
-                self.runtimeID = nil
-                self.failPending(HermesError.socketClosed)
+                self.close()
+                self.onDisconnect?()
             }
         }
     }
@@ -114,7 +123,7 @@ final class HermesConversation {
         heartbeat = Task {
             var beat = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(15))
+                do { try await Task.sleep(for: .seconds(15)) } catch { return }
                 beat += 1
                 try? await task.send(.string(#"{"jsonrpc":"2.0","id":"heartbeat-\#(beat)","method":"gateway.ping","params":{}}"#))
             }
@@ -159,13 +168,18 @@ final class HermesConversation {
             if let id = payload["tool_id"].text { onToolComplete?(id, payload["summary"].text) }
         case "message.complete":
             if event["admission_id"].text != nil, event["execution_generation"] == .null { return }
-            if payload["status"].text == "error", payload["partial"].flag != true {
-                onError?(payload["text"].text ?? payload["error"].text ?? "The turn failed.")
+            if payload["status"].text == "error" {
+                if payload["partial"].flag == true {
+                    onComplete?(payload["text"].text, Self.outputTokens(payload),
+                                payload["error"].text ?? "The server couldn't finish the reply.")
+                } else {
+                    onError?(payload["text"].text ?? payload["error"].text ?? "The turn failed.")
+                }
             } else {
-                onComplete?(payload["text"].text, Self.outputTokens(payload))
+                onComplete?(payload["text"].text, Self.outputTokens(payload), nil)
             }
         case "error":
-            if let message = payload["message"].text, !message.isEmpty { onError?(message) }
+            onError?(payload["message"].text ?? "The turn failed.")
         case "session.title":
             if let title = payload["title"].text, !title.isEmpty { onTitle?(title) }
         case "session.info":

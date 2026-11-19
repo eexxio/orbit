@@ -26,7 +26,7 @@ final class ComposerDictation {
     private var noticeTimeout: Task<Void, Never>?
     private var engine: AVAudioEngine?
     private var analyzer: SpeechAnalyzer?
-    private var input: AsyncThrowingStream<AnalyzerInput, Error>.Continuation?
+    private var input: DictationAudioInput?
     private var installation: Progress?
     private var ownsAudioSession = false
     private var sessionID: UUID?
@@ -155,7 +155,8 @@ final class ComposerDictation {
         try await analyzer.prepareToAnalyze(in: format)
         guard sessionID == id else { return }
 
-        let (audio, input) = AsyncThrowingStream<AnalyzerInput, Error>.makeStream()
+        let (audio, continuation) = AsyncThrowingStream<AnalyzerInput, Error>.makeStream()
+        let input = DictationAudioInput(format: format, continuation: continuation)
         self.input = input
         try await analyzer.start(inputSequence: audio)
         guard sessionID == id else { return }
@@ -168,7 +169,10 @@ final class ComposerDictation {
         let node = engine.inputNode
         let source = node.outputFormat(forBus: 0)
         guard source.sampleRate > 0, source.channelCount > 0 else { throw AudioError.unavailable }
-        try Self.installTap(on: node, source: source, format: format, input: input)
+        let frames = AVAudioFrameCount(source.sampleRate * 0.15)
+        try node.installAudioTap(onBus: 0, bufferSize: frames, format: source) { buffer, _ in
+            input.receive(buffer)
+        }
         self.engine = engine
         try engine.start()
         beginListening()
@@ -201,25 +205,6 @@ final class ComposerDictation {
                 if sessionID == id {
                     if phase == .finishing { completeFinish() } else { stop(with: .error) }
                 }
-            }
-        }
-    }
-
-    private nonisolated static func installTap(
-        on node: AVAudioInputNode, source: AVAudioFormat, format: AVAudioFormat,
-        input: AsyncThrowingStream<AnalyzerInput, Error>.Continuation
-    ) throws {
-        let converter = Mutex(AnalyzerInputConverter(analyzerFormat: format))
-        try node.installAudioTap(onBus: 0, bufferSize: 1024, format: source) { buffer, _ in
-            do {
-                let convertedBuffers = try converter.withLock {
-                    try $0.convert(AVAudioPCMBuffer(copying: buffer), at: nil)
-                }
-                for converted in convertedBuffers {
-                    input.yield(converted)
-                }
-            } catch {
-                input.finish(throwing: error)
             }
         }
     }
@@ -267,7 +252,7 @@ final class ComposerDictation {
         afterFinish = completion
         silence?.cancel()
         limit?.cancel()
-        stopMicrophone()
+        stopMicrophone(flush: true)
         if let fakeText {
             receive(fakeText, isFinal: true)
             completeFinish()
@@ -289,13 +274,13 @@ final class ComposerDictation {
         completion?()
     }
 
-    private func stopMicrophone() {
+    private func stopMicrophone(flush: Bool = false) {
         if let engine {
             engine.stop()
             engine.inputNode.removeTap(onBus: 0)
             self.engine = nil
         }
-        input?.finish()
+        input?.finish(flush: flush)
         input = nil
         if ownsAudioSession {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -338,6 +323,41 @@ final class ComposerDictation {
         noticeTimeout = Task {
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
             notice = nil
+        }
+    }
+}
+
+private nonisolated final class DictationAudioInput: Sendable {
+    private let converter: Mutex<AnalyzerInputConverter>
+    private let continuation: AsyncThrowingStream<AnalyzerInput, Error>.Continuation
+
+    init(format: AVAudioFormat, continuation: AsyncThrowingStream<AnalyzerInput, Error>.Continuation) {
+        converter = Mutex(AnalyzerInputConverter(analyzerFormat: format))
+        self.continuation = continuation
+    }
+
+    func receive(_ buffer: AVReadOnlyAudioPCMBuffer) {
+        do {
+            try converter.withLock {
+                for audio in try $0.convert(AVAudioPCMBuffer(copying: buffer), at: nil) {
+                    continuation.yield(audio)
+                }
+            }
+        } catch {
+            continuation.finish(throwing: error)
+        }
+    }
+
+    func finish(flush: Bool) {
+        do {
+            if flush {
+                try converter.withLock {
+                    for audio in try $0.flush() { continuation.yield(audio) }
+                }
+            }
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
         }
     }
 }

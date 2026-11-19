@@ -19,6 +19,7 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertTrue(reply(partial, in: app).exists)
         XCTAssertFalse(waiting.exists)
         XCTAssertFalse(app.buttons["Copy reply"].exists)
+        XCTAssertFalse(app.buttons["chat.reply.completed"].exists)
         screenshot("chat-streaming")
         try await advance("complete", to: "end")
 
@@ -26,6 +27,7 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertFalse(reply(partial, in: app).exists)
         XCTAssertTrue(streaming.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Copy reply"].exists)
+        XCTAssertTrue(app.buttons["chat.reply.completed"].exists)
         screenshot("chat-completed")
     }
 
@@ -37,12 +39,18 @@ final class ChatStreamingTests: XCTestCase {
 
         let streaming = app.staticTexts["chat.reply.streaming"]
         XCTAssertTrue(streaming.waitForExistence(timeout: 10))
+        let tool = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "get_weather")).firstMatch
+        XCTAssertTrue(tool.waitForExistence(timeout: 5))
+        XCTAssertEqual(tool.value as? String, "Running")
         try await advance("disconnect", to: "end")
 
         let interrupted = app.staticTexts["chat.reply.interrupted"]
         XCTAssertTrue(interrupted.waitForExistence(timeout: 10))
         XCTAssertTrue(reply(partial, in: app).exists)
         XCTAssertFalse(streaming.exists)
+        XCTAssertEqual(tool.value as? String, "Tool result not received")
+        XCTAssertFalse(app.buttons["chat.reply.completed"].exists)
         screenshot("chat-interrupted")
 
         send("Send after reconnecting", in: app)

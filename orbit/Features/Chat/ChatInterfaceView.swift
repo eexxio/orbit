@@ -104,9 +104,12 @@ struct ChatInterfaceView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 24) {
                     let copies = replyCopies
+                    let completedID = chat.replyState == .completed
+                        ? chat.messages.reversed().prefix(while: { !$0.isUser }).first(where: { $0.role == "assistant" })?.id
+                        : nil
                     // Hidden tool calls stay in `messages`, so the cache and the toggle keep them.
                     ForEach(showToolCalls ? chat.messages : chat.messages.filter { $0.tool == nil }) { message in
-                        messageRow(message, copyText: copies[message.id])
+                        messageRow(message, copyText: copies[message.id], isCompletedReply: message.id == completedID)
                     }
 
                     replyStatus
@@ -173,7 +176,7 @@ struct ChatInterfaceView: View {
     // MARK: - Message Row
 
     @ViewBuilder
-    private func messageRow(_ message: ChatMessage, copyText: String?) -> some View {
+    private func messageRow(_ message: ChatMessage, copyText: String?, isCompletedReply: Bool) -> some View {
         if message.role == "reasoning" {
             ReasoningRow(text: message.text, isLive: message.id == chat.reasoningID)
         } else if let tool = message.tool {
@@ -208,6 +211,7 @@ struct ChatInterfaceView: View {
                                 Image(systemName: "doc.on.doc")
                             }
                             .accessibilityLabel("Copy reply")
+                            .accessibilityIdentifier("chat.reply.completed", isEnabled: isCompletedReply)
                         }
 
                         if let rate = message.rate {

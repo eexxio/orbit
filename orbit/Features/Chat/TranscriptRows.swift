@@ -55,10 +55,10 @@ struct ToolCallRow: View {
                     ProgressView().controlSize(.mini)
                 } else {
                     Image(systemName: "exclamationmark.circle")
-                        .accessibilityLabel("Tool result not received")
                 }
             }
             .frame(width: 16)
+            .accessibilityHidden(true)
 
             Text(tool.name)
                 .font(.footnote.monospaced().weight(.medium))
@@ -83,5 +83,6 @@ struct ToolCallRow: View {
         .padding(.vertical, 6)
         .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 10))
         .accessibilityElement(children: .combine)
+        .accessibilityValue(tool.isDone ? "Completed" : isLive ? "Running" : "Tool result not received")
     }
 }

@@ -94,6 +94,8 @@ class HermesStub(BaseHTTPRequestHandler):
         if not self.wait(scenario, "delta"):
             return False
         self.event("message.delta", {"text": PARTIAL})
+        if scenario == "disconnect":
+            self.event("tool.start", {"tool_id": "weather", "name": "get_weather"})
         if not self.wait(scenario, "end"):
             return False
         if scenario == "disconnect":

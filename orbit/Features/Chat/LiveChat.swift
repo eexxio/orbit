@@ -9,7 +9,7 @@ import Observation
 @MainActor @Observable
 final class LiveChat {
     enum ReplyState: Equatable {
-        case idle, waiting, streaming
+        case idle, waiting, streaming, completed
         case interrupted(String), failed(String)
 
         var isActive: Bool { self == .waiting || self == .streaming }
@@ -182,7 +182,7 @@ final class LiveChat {
                 let soleReply = index == turnStart && index == messages.count - 1
                 messages[index].rate = TokenRate(tokens: soleReply ? outputTokens : nil, text: messages[index].text, since: streamStart)
             }
-            finishTurn(as: failure.map(ReplyState.failed) ?? .idle)
+            finishTurn(as: failure.map(ReplyState.failed) ?? .completed)
         }
         chat.onError = { [weak self] message in
             self?.finishTurn(as: .failed(message))

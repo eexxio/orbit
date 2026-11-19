@@ -61,10 +61,15 @@ struct ChatExportButton: View {
         }
         let metadata = LPLinkMetadata()
         metadata.title = file.lastPathComponent
-        if let icon = UIImage(systemName: "doc.text") {
-            metadata.iconProvider = NSItemProvider(object: icon)
-        }
         let configuration = UIActivityItemsConfiguration(itemProviders: [provider])
+        let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: [String: Any]]
+        let iconNames = icons?["CFBundlePrimaryIcon"]?["CFBundleIconFiles"] as? [String]
+        if let name = iconNames?.last, let icon = UIImage(named: name) {
+            let iconProvider = NSItemProvider(object: icon)
+            metadata.iconProvider = iconProvider
+            metadata.imageProvider = iconProvider
+            configuration.previewProvider = { _, _, _ in iconProvider }
+        }
         configuration.perItemMetadataProvider = { _, key in
             key == .linkPresentationMetadata ? metadata : nil
         }

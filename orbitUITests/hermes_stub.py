@@ -5,9 +5,10 @@ import hashlib
 import json
 import struct
 import threading
+import time
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 
 GATES = defaultdict(threading.Event)
@@ -25,6 +26,9 @@ SCENARIOS = {
     "Stop while waiting": "stop-waiting",
     "Send the next reply": "next",
 }
+SESSIONS = defaultdict(list)
+FAIL_PATCH = set()
+LOCK = threading.RLock()
 
 
 class HermesStub(BaseHTTPRequestHandler):
@@ -37,6 +41,12 @@ class HermesStub(BaseHTTPRequestHandler):
             with STATS_LOCK:
                 self.respond(json.dumps(STATS[fixture_id]).encode(), "application/json")
             return
+        if path.endswith('/mutation-snapshot'):
+            self.respond(json.dumps({'runtime_revision': 1, 'runtime_generation': 1}).encode(), 'application/json')
+            return
+        if path.endswith('/messages'):
+            self.respond(b'{"messages": []}', 'application/json')
+            return
         if path == "/api/ws":
             self.websocket(fixture_id)
             return
@@ -46,7 +56,7 @@ class HermesStub(BaseHTTPRequestHandler):
         data = {
             "/api/status": {"auth_required": False, "version": "fixture"},
             "/api/profiles/active": {"current": "default"},
-            "/api/sessions": {"sessions": []},
+            "/api/sessions": {"sessions": list(SESSIONS[fixture_id])},
         }.get(path)
         if data is None:
             self.send_error(404)
@@ -54,6 +64,23 @@ class HermesStub(BaseHTTPRequestHandler):
         self.respond(json.dumps(data).encode(), "application/json")
 
     def do_POST(self):
+        fixture_id, _, route = urlsplit(self.path).path.lstrip("/").partition("/")
+        route = "/" + route
+        if route in {'/fixture/seed', '/fixture/empty', '/fixture/fail-patch'}:
+            with LOCK:
+                if route == '/fixture/fail-patch':
+                    FAIL_PATCH.add(fixture_id)
+                else:
+                    FAIL_PATCH.discard(fixture_id)
+                    now = time.time()
+                    SESSIONS[fixture_id] = [] if route == '/fixture/empty' else [
+                        {'id': 'older', 'title': 'Weekend plans', 'last_active': now - 9000},
+                        {'id': 'pinned', 'title': 'Project notes', 'last_active': now - 3600, 'pinned': True},
+                        {'id': 'fixture', 'title': 'Research ideas', 'last_active': now - 120},
+                    ]
+            self.send_response(204)
+            self.end_headers()
+            return
         path = urlsplit(self.path).path.split("/")
         if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end", "interrupted"}:
             self.send_error(404)
@@ -68,6 +95,37 @@ class HermesStub(BaseHTTPRequestHandler):
             GATES[key].set()
         self.send_response(204)
         self.end_headers()
+
+    def do_PATCH(self):
+        fixture_id = urlsplit(self.path).path.split('/')[1]
+        body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
+        with LOCK:
+            if fixture_id in FAIL_PATCH:
+                FAIL_PATCH.discard(fixture_id)
+                self.send_error(405)
+                return
+            session = next((s for s in SESSIONS[fixture_id] if s['id'] == urlsplit(self.path).path.split('/')[-1]), None)
+            if session is None:
+                self.send_error(404)
+                return
+            if not all(k in body for k in ('profile', 'request_id', 'expected_revision', 'expected_generation')):
+                self.send_error(409)
+                return
+            for key in ('title', 'pinned'):
+                if key in body:
+                    session[key] = body[key]
+        self.respond(b'{"ok": true}', 'application/json')
+
+    def do_DELETE(self):
+        fixture_id = urlsplit(self.path).path.split('/')[1]
+        query = parse_qs(urlsplit(self.path).query)
+        if not all(k in query for k in ('profile', 'request_id', 'expected_revision', 'expected_generation')):
+            self.send_error(409)
+            return
+        key = urlsplit(self.path).path.split('/')[-1]
+        with LOCK:
+            SESSIONS[fixture_id][:] = [s for s in SESSIONS[fixture_id] if s['id'] != key]
+        self.respond(b'{"ok": true}', 'application/json')
 
     def respond(self, data, content_type):
         self.send_response(200)

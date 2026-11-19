@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var showSettings = false
 
     @State private var startNewChat = false
+    @State private var newChatID = UUID()
 
     private var client: HermesClient { HermesClient.shared }
 
@@ -52,6 +53,7 @@ struct ContentView: View {
                 ToolbarItem(placement: .bottomBar) {
 
                     Button {
+                        newChatID = UUID()
                         startNewChat = true
                     } label: {
                         Image(systemName: "square.and.pencil")
@@ -62,6 +64,7 @@ struct ContentView: View {
             }
             .navigationDestination(isPresented: $startNewChat) {
                 ChatInterfaceView()
+                    .id(newChatID)
                     .navigationBarTitleDisplayMode(.inline)
             }
             .task {

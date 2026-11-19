@@ -12,7 +12,7 @@ In another terminal, substitute an available iOS simulator's ID from
 ```sh
 xcodebuild -project orbit.xcodeproj -scheme orbit \
   -destination 'platform=iOS Simulator,id=SIMULATOR_ID' \
-  -resultBundlePath orbit-streaming.xcresult test CODE_SIGNING_ALLOWED=NO
+  -resultBundlePath "orbit-streaming-$(uuidgen).xcresult" test CODE_SIGNING_ALLOWED=NO
 ```
 
 The tests use the app's normal REST sign-in and JSON-RPC WebSocket path. They

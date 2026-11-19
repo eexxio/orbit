@@ -16,15 +16,30 @@ final class IPadLayoutTests: XCTestCase {
         let app = try await launch(.portrait)
         let projects = row("pinned", in: app)
         projects.tap()
-        XCTAssertTrue(app.navigationBars["Project notes"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Next steps"].waitForExistence(timeout: 10))
+        let detail = app.navigationBars["Project notes"]
+        let heading = app.staticTexts["Next steps"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 10))
+        XCTAssertTrue(heading.waitForExistence(timeout: 10))
         XCTAssertTrue(row("fixture", in: app).isHittable)
         screenshot("ipad-portrait")
 
+        app.typeKey("/", modifierFlags: .command)
+        let done = app.buttons["chats.shortcuts.done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 5))
+
         XCUIDevice.shared.orientation = .landscapeLeft
-        XCTAssertTrue(app.navigationBars["Project notes"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Next steps"].exists)
+        XCTAssertTrue(detail.waitForExistence(timeout: 10))
+        XCTAssertTrue(heading.exists)
         XCTAssertTrue(row("fixture", in: app).isHittable)
+        let detailFrame = detail.frame
+        let gutter = max(24, (detailFrame.width - 720) / 2)
+        let bubble = app.staticTexts["Can you outline the next steps for the prototype?"]
+        XCTAssertTrue(bubble.exists)
+        XCTAssertEqual(heading.frame.minX, detailFrame.minX + gutter, accuracy: 12)
+        XCTAssertEqual(bubble.frame.maxX, detailFrame.maxX - gutter - 15, accuracy: 12)
+        XCTAssertGreaterThan(heading.frame.midY, app.frame.midY)
         screenshot("ipad-landscape")
         row("fixture", in: app).tap()
         XCTAssertTrue(app.navigationBars["Research ideas"].waitForExistence(timeout: 10))

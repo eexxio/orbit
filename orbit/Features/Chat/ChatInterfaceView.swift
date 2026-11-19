@@ -158,15 +158,16 @@ struct ChatInterfaceView: View {
                     replyStatus.padding(.top, isWorkspace ? 12 : 0)
                 }
                 .scrollTargetLayout()
-                .frame(width: isWorkspace ? min(720, max(0, proxy.size.width - 48)) : nil)
-                .padding(.horizontal, isWorkspace ? 24 : 18)
+                .padding(.horizontal, isWorkspace ? 0 : 18)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
                 // A conversation stacks up from the composer: a short one sits just above
                 // the input field instead of hanging from the navigation bar and leaving a
                 // well of empty space above it.
-                .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .bottom)
+                .frame(maxWidth: .infinity, minHeight: isWorkspace ? nil : proxy.size.height, alignment: .bottom)
             }
+            .contentMargins(.horizontal, isWorkspace ? max(24, (proxy.size.width - 720) / 2) : 0, for: .scrollContent)
+            .defaultScrollAnchor(isWorkspace ? .bottom : nil, for: .alignment)
             // An existing chat opens at its newest message, however long its history is.
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(isWorkspace ? nil : .bottom, for: .sizeChanges)
@@ -178,7 +179,8 @@ struct ChatInterfaceView: View {
             .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { old, new in
                 let grewContent = new.contentSize.height > old.contentSize.height + 0.5
                 let grewInset = new.contentInsets.bottom > old.contentInsets.bottom + 0.5
-                guard grewContent || grewInset else { return }
+                let resized = isWorkspace && new.containerSize != old.containerSize
+                guard grewContent || grewInset || resized else { return }
                 pinToBottom()
             }
             .onScrollPhaseChange { _, phase, context in

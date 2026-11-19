@@ -17,9 +17,13 @@ struct ChatInterfaceView: View {
     @AppStorage(AppearanceKey.showToolCalls) private var showToolCalls = true
     @State private var chat: LiveChat
     @State private var scrollPosition = ScrollPosition()
+    @State private var isFollowingBottom = true
+    @State private var isUserScrolling = false
     @State private var draft = ""
 
     @FocusState private var composerIsFocused: Bool
+
+    private let columnWidth: CGFloat = 720
 
     var body: some View {
         NavigationStack {
@@ -102,54 +106,80 @@ struct ChatInterfaceView: View {
     private var conversation: some View {
         GeometryReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     let copies = replyCopies
                     let completedID = chat.replyState == .completed
                         ? chat.messages.reversed().prefix(while: { !$0.isUser }).first(where: { $0.role == "assistant" })?.id
                         : nil
                     // Hidden tool calls stay in `messages`, so the cache and the toggle keep them.
-                    ForEach(showToolCalls ? chat.messages : chat.messages.filter { $0.tool == nil }) { message in
+                    let messages = showToolCalls ? chat.messages : chat.messages.filter { $0.tool == nil }
+                    ForEach(messages.enumerated(), id: \.element.id) { index, message in
+                        let previous = index > 0 ? messages[index - 1] : nil
                         messageRow(message, copyText: copies[message.id], isCompletedReply: message.id == completedID)
+                            .padding(.top, transcriptGap(before: message, after: previous))
                     }
 
-                    replyStatus
+                    replyStatus(topGap: messages.last?.isUser == true ? 24 : 12)
                 }
+                .frame(maxWidth: columnWidth)
                 .padding(.horizontal, 18)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
                 // A conversation stacks up from the composer: a short one sits just above
                 // the input field instead of hanging from the navigation bar and leaving a
                 // well of empty space above it.
-                .frame(minHeight: proxy.size.height, alignment: .bottom)
+                .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .bottom)
             }
             // An existing chat opens at its newest message, however long its history is.
             .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .scrollDismissesKeyboard(.interactively)
             .scrollPosition($scrollPosition)
-            // The rows of a lazy stack report their real height a frame or two after they
-            // appear, and the keyboard (or a taller composer) grows the bottom inset. Both
-            // push the newest message below the composer unless the view follows them down.
-            .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { old, new in
-                let grewContent = new.contentSize.height > old.contentSize.height + 0.5
-                let grewInset = new.contentInsets.bottom > old.contentInsets.bottom + 0.5
-                guard grewContent || grewInset else { return }
-                pinToBottom()
+            .onScrollGeometryChange(for: CGFloat.self) { bottomOffset(in: $0) } action: { old, new in
+                if abs(new - old) > 0.5 { pinIfFollowing() }
             }
-            .onAppear { pinToBottom() }
-            // A loaded or refreshed history, a sent message, and each streamed word.
-            .onChange(of: scrollToken) { pinToBottom() }
+            .onScrollPhaseChange { old, new, context in
+                isUserScrolling = new == .tracking || new == .interacting || new == .decelerating
+                guard new == .idle else { return }
+                if old == .interacting || old == .decelerating {
+                    isFollowingBottom = bottomOffset(in: context.geometry) - context.geometry.contentOffset.y <= 40
+                }
+                if old != .animating { pinIfFollowing() }
+            }
+            .onAppear { pinIfFollowing() }
+            .onChange(of: scrollToken) { pinIfFollowing() }
+            .overlay(alignment: .bottom) {
+                if !isFollowingBottom {
+                    JumpToLatestButton(action: followLatest)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .frame(maxWidth: columnWidth)
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 8)
+                }
+            }
         }
     }
 
-    /// Puts the newest message directly above the composer.
-    ///
-    /// Scrolling to an edge rather than to a view id: on the first layout pass a lazy
-    /// stack has not realized its last row yet, so an id-based scroll has nothing to aim
-    /// at and the chat opens short of the bottom. The edge also keeps its position when
-    /// the content grows, which is what streaming and late layout both need.
-    private func pinToBottom() {
+    private func bottomOffset(in geometry: ScrollGeometry) -> CGFloat {
+        geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height
+    }
+
+    private func followLatest() {
+        isFollowingBottom = true
         scrollPosition.scrollTo(edge: .bottom)
+    }
+
+    private func pinIfFollowing() {
+        // A lazy stack may not have realized its final row yet, so scroll to the edge, not an ID.
+        guard isFollowingBottom, !isUserScrolling else { return }
+        scrollPosition.scrollTo(edge: .bottom)
+    }
+
+    private func transcriptGap(before message: ChatMessage, after previous: ChatMessage?) -> CGFloat {
+        guard let previous else { return 0 }
+        if message.isUser || previous.isUser { return 24 }
+        if (message.tool != nil || message.role == "reasoning") &&
+            (previous.tool != nil || previous.role == "reasoning") { return 8 }
+        return 12
     }
 
     /// Changes whenever the newest content changes, so the view follows it to the bottom.
@@ -195,7 +225,7 @@ struct ChatInterfaceView: View {
                     )
             }
         } else {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: copyText == nil ? 12 : 0) {
                 // Full block-level Markdown: headings, lists, code blocks, quotes, tables.
                 Markdown(message.text)
                     .markdownTheme(.basic)
@@ -203,12 +233,14 @@ struct ChatInterfaceView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if copyText != nil || message.rate != nil {
-                    HStack(spacing: 20) {
+                    HStack(spacing: 0) {
                         if let copyText {
                             Button {
                                 UIPasteboard.general.string = copyText
                             } label: {
                                 Image(systemName: "doc.on.doc")
+                                    .frame(width: 44, height: 44, alignment: .leading)
+                                    .contentShape(.rect)
                             }
                             .accessibilityLabel("Copy reply")
                             .accessibilityIdentifier("chat.reply.completed", isEnabled: isCompletedReply)
@@ -260,8 +292,8 @@ struct ChatInterfaceView: View {
         .padding(.leading, 16)
         .padding(.trailing, 7)
         .frame(minHeight: 44)
-        // At rest the bar narrows toward the center; focusing it spreads it full width.
-        .frame(maxWidth: composerIsCollapsed ? 240 : .infinity)
+        // At rest the bar narrows toward the center; focusing it expands to the conversation width.
+        .frame(maxWidth: composerIsCollapsed ? 240 : columnWidth)
         .contentShape(.rect)
         .onTapGesture { composerIsFocused = true }
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
@@ -290,34 +322,22 @@ struct ChatInterfaceView: View {
 
         draft = ""
         composerIsFocused = false
+        followLatest()
         chat.send(text)
     }
 
     @ViewBuilder
-    private var replyStatus: some View {
+    private func replyStatus(topGap: CGFloat) -> some View {
         switch chat.replyState {
-        case .waiting where showsWaitingIndicator:
-            HStack(spacing: 6) {
-                Image(systemName: "brain")
-                    .symbolEffect(.pulse)
-                    .accessibilityHidden(true)
-                Text("Thinking…")
-                    .accessibilityIdentifier("chat.reply.waiting")
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        case .streaming:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini).accessibilityHidden(true)
-                Text("Replying…")
-                    .accessibilityIdentifier("chat.reply.streaming")
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
+        case .waiting where showsWaitingIndicator, .streaming:
+            ReplyActivityRow(isStreaming: chat.replyState == .streaming)
+                .padding(.top, topGap)
         case .interrupted(let detail):
             replyIssue("Reply interrupted", detail: detail, identifier: "chat.reply.interrupted")
+                .padding(.top, topGap)
         case .failed(let detail):
             replyIssue("Reply failed", detail: detail, identifier: "chat.reply.failed")
+                .padding(.top, topGap)
         default:
             EmptyView()
         }

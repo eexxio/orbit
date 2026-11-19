@@ -45,6 +45,7 @@ struct ReasoningRow: View {
 struct ToolCallRow: View {
     let tool: HermesToolCall
     let isLive: Bool
+    @ScaledMetric(relativeTo: .footnote) private var iconSize: CGFloat = 16
 
     var body: some View {
         HStack(spacing: 8) {
@@ -57,12 +58,14 @@ struct ToolCallRow: View {
                     Image(systemName: "exclamationmark.circle")
                 }
             }
-            .frame(width: 16)
+            .frame(width: iconSize, height: iconSize)
             .accessibilityHidden(true)
 
             Text(tool.name)
                 .font(.footnote.monospaced().weight(.medium))
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+                .layoutPriority(2)
 
             if !tool.context.isEmpty {
                 Text(tool.context)
@@ -84,5 +87,48 @@ struct ToolCallRow: View {
         .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 10))
         .accessibilityElement(children: .combine)
         .accessibilityValue(tool.isDone ? "Completed" : isLive ? "Running" : "Tool result not received")
+    }
+}
+
+struct ReplyActivityRow: View {
+    let isStreaming: Bool
+    @ScaledMetric(relativeTo: .subheadline) private var iconSize: CGFloat = 20
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ZStack {
+                if isStreaming {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "brain").symbolEffect(.pulse, isActive: !reduceMotion)
+                }
+            }
+            .frame(width: iconSize, height: iconSize)
+            .accessibilityHidden(true)
+
+            Text(isStreaming ? "Replying…" : "Thinking…")
+                .contentTransition(.opacity)
+                .accessibilityIdentifier(isStreaming ? "chat.reply.streaming" : "chat.reply.waiting")
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isStreaming)
+    }
+}
+
+struct JumpToLatestButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.down")
+                .font(.body.weight(.semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .circle)
+        .accessibilityLabel("Jump to latest")
     }
 }

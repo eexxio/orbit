@@ -5,6 +5,8 @@ import SwiftUI
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
     @AppStorage(AppearanceKey.theme) private var theme = Theme.system
 
+    init() { ReplyActivities.shared.endLeftovers() }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

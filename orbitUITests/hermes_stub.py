@@ -14,6 +14,7 @@ GATES = defaultdict(threading.Event)
 STATS_LOCK = threading.Lock()
 STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
 PARTIAL = "Here is the first part"
+LONG_TOOL_SECONDS = 6
 SCENARIOS = {
     "Complete the reply": "complete",
     "Close the connection": "disconnect",
@@ -24,6 +25,7 @@ SCENARIOS = {
     "Ignore the stop": "stop-ignore",
     "Stop while waiting": "stop-waiting",
     "Send the next reply": "next",
+    "Run a long task": "long",
 }
 
 
@@ -147,6 +149,18 @@ class HermesStub(BaseHTTPRequestHandler):
                 self.event("message.delta", {"text": "The next reply"})
                 if self.wait(fixture_id, scenario, "end"):
                     self.event("message.complete", {"text": "The next reply arrived."})
+            return True
+        if scenario == "long":
+            self.event("message.start", {})
+            self.event("tool.start", {"tool_id": "search", "name": "web_search"})
+            if self.stopped.wait(timeout=LONG_TOOL_SECONDS):
+                return True
+            self.event("tool.complete", {"tool_id": "search", "summary": "Found the answer"})
+            for _ in range(240):
+                if self.stopped.wait(timeout=0.5):
+                    return True
+                self.event("message.delta", {"text": "The agent keeps working on it. "})
+            self.event("message.complete", {"text": "The long task finished."})
             return True
         if not self.wait(fixture_id, scenario, "delta", self.stopped):
             return False

@@ -1,3 +1,4 @@
+import ActivityKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -7,6 +8,7 @@ struct SettingsView: View {
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
     @AppStorage(AppearanceKey.theme) private var theme = Theme.system
     @AppStorage(AppearanceKey.showToolCalls) private var showToolCalls = true
+    @AppStorage(AppearanceKey.liveActivities) private var liveActivities = false
 
     var body: some View {
 
@@ -25,6 +27,7 @@ struct SettingsView: View {
                 agentSection
                 appearanceSection
                 chatSection
+                liveActivitySection
                 aboutSection
             }
             .navigationTitle("Settings")
@@ -139,6 +142,25 @@ struct SettingsView: View {
             Text("Chat")
         } footer: {
             Text("Show the commands, file reads and other tools the agent runs while it works.")
+        }
+    }
+
+    private var liveActivitySection: some View {
+
+        Section {
+            Toggle(isOn: $liveActivities) {
+                SettingsField(icon: "platter.filled.top.iphone") {
+                    Text("Live Activities")
+                }
+            }
+            .accessibilityIdentifier("settings.liveActivities")
+        } footer: {
+            Text(ActivityAuthorizationInfo().areActivitiesEnabled
+                 ? "Show agent progress on the Lock Screen and Dynamic Island. Chat text stays in orbit."
+                 : "Live Activities are turned off for orbit in iOS Settings. Chats work as usual.")
+        }
+        .onChange(of: liveActivities) {
+            if !liveActivities { ReplyActivities.shared.endAll() }
         }
     }
 

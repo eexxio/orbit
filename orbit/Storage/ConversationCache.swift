@@ -72,7 +72,12 @@ final class ConversationCache {
 
     func store(_ messages: [HermesMessage], for key: String, lastActive: Double?) {
         let now = Date()
-        let entry = Entry(messages: messages, lastActive: lastActive ?? index.conversations[key]?.lastActive, touched: now)
+        let previews = messages.map { message in
+            var preview = message
+            preview.tool = message.tool?.cachePreview
+            return preview
+        }
+        let entry = Entry(messages: previews, lastActive: lastActive ?? index.conversations[key]?.lastActive, touched: now)
         index.conversations[key] = Stamp(lastActive: entry.lastActive, touched: now)
         let url = file(for: key)
         if let data = try? JSONEncoder().encode(entry) {

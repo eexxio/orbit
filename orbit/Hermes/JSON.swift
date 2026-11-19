@@ -50,4 +50,10 @@ enum JSON: Codable, Equatable, Sendable {
 
     static func decode(_ data: Data) -> JSON? { try? JSONDecoder().decode(JSON.self, from: data) }
     func encoded() -> Data { (try? JSONEncoder().encode(self)) ?? Data() }
+
+    var rawToolText: String? {
+        if self == .null { return nil }
+        if case .string(let raw) = self { return raw }
+        return String(decoding: encoded(), as: UTF8.self)
+    }
 }

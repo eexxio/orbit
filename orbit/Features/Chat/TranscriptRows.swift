@@ -45,44 +45,69 @@ struct ReasoningRow: View {
 struct ToolCallRow: View {
     let tool: HermesToolCall
     let isLive: Bool
+    let openDetails: () -> Void
+    @ScaledMetric(relativeTo: .footnote) private var iconWidth = 16.0
+
+    private var status: ToolCallStatus { ToolCallStatus(tool: tool, isLive: isLive) }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Group {
-                if tool.isDone {
-                    Image(systemName: "checkmark.circle")
-                } else if isLive {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: "exclamationmark.circle")
+        Button(action: openDetails) {
+            HStack(spacing: 8) {
+                status.icon
+                    .frame(width: iconWidth)
+                    .accessibilityHidden(true)
+
+                Text(tool.name)
+                    .font(.footnote.monospaced().weight(.medium))
+                    .foregroundStyle(.primary)
+
+                if !tool.context.isEmpty {
+                    Text(tool.context)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-            }
-            .frame(width: 16)
-            .accessibilityHidden(true)
 
-            Text(tool.name)
-                .font(.footnote.monospaced().weight(.medium))
-                .foregroundStyle(.primary)
+                if let summary = tool.summary, !summary.isEmpty {
+                    Text(summary)
+                        .lineLimit(1)
+                        .foregroundStyle(.tertiary)
+                        .layoutPriority(1)
+                }
 
-            if !tool.context.isEmpty {
-                Text(tool.context)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-
-            if let summary = tool.summary, !summary.isEmpty {
-                Text(summary)
-                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.tertiary)
-                    .layoutPriority(1)
+                    .layoutPriority(3)
+                    .accessibilityHidden(true)
             }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 10))
+            .contentShape(.contextMenuPreview, .rect(cornerRadius: 10))
+            .frame(minHeight: 44, alignment: .leading)
+            .contentShape(.rect)
         }
-        .font(.footnote)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 10))
-        .accessibilityElement(children: .combine)
-        .accessibilityValue(tool.isDone ? "Completed" : isLive ? "Running" : "Tool result not received")
+        .buttonStyle(ToolRowButtonStyle())
+        .contextMenu {
+            if let input = tool.arguments {
+                Button("Copy Input", systemImage: "doc.on.doc") { copyToolPayload(input) }
+            }
+            if let output = tool.output {
+                Button("Copy Output", systemImage: "doc.on.doc") { copyToolPayload(output) }
+            }
+            Button("Show Details", systemImage: "info.circle", action: openDetails)
+        }
+        .accessibilityValue(status.label)
+        .accessibilityHint("Shows input and output")
+        .accessibilityIdentifier("chat.tool.row")
+    }
+
+}
+
+private struct ToolRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.6 : 1)
     }
 }

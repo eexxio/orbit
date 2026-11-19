@@ -24,6 +24,9 @@ SCENARIOS = {
     "Ignore the stop": "stop-ignore",
     "Stop while waiting": "stop-waiting",
     "Send the next reply": "next",
+    "Read the project notes": "tool-short",
+    "Read the build log": "tool-long",
+    "Read a missing file": "tool-failed",
 }
 
 
@@ -43,6 +46,22 @@ class HermesStub(BaseHTTPRequestHandler):
         if path == "/":
             self.respond(b'<script>window.__HERMES_SESSION_TOKEN__ = "fixture";</script>', "text/html")
             return
+        if fixture_id.startswith("tool-history-"):
+            if path == "/api/sessions":
+                self.respond(b'{"sessions":[{"id":"archived","title":"Saved tool calls","last_active":1}]}',
+                             "application/json")
+                return
+            if path == "/api/sessions/archived/messages":
+                rows = [
+                    {"id": 1, "role": "assistant", "content": None, "timestamp": 1795108000, "tool_calls": [
+                        {"id": "saved-a", "function": {"name": "read_file", "arguments": '{"path":"NOTES.md"}'}},
+                        {"id": "saved-b", "function": {"name": "read_file", "arguments": '{"path":"README.md"}'}},
+                    ]},
+                    {"id": 2, "role": "tool", "tool_call_id": "saved-b", "timestamp": 1795108001, "content": "Readme result"},
+                    {"id": 3, "role": "tool", "tool_call_id": "saved-a", "timestamp": 1795108002, "content": '{"content":"Archived notes"}'},
+                ]
+                self.respond(json.dumps({"messages": rows}).encode(), "application/json")
+                return
         data = {
             "/api/status": {"auth_required": False, "version": "fixture"},
             "/api/profiles/active": {"current": "default"},
@@ -150,6 +169,8 @@ class HermesStub(BaseHTTPRequestHandler):
             return True
         if not self.wait(fixture_id, scenario, "delta", self.stopped):
             return False
+        if scenario.startswith("tool-"):
+            return self.stream_tool(fixture_id, scenario)
         self.event("message.delta", {"text": PARTIAL})
         if scenario == "disconnect" or scenario.startswith("stop"):
             self.event("tool.start", {"tool_id": "weather", "name": "get_weather"})
@@ -172,6 +193,28 @@ class HermesStub(BaseHTTPRequestHandler):
         else:
             self.event("message.delta", {"text": " and the ending."})
             self.event("message.complete", {"text": PARTIAL + " and the ending."})
+        return True
+
+    def stream_tool(self, fixture_id, scenario):
+        name = "read_file"
+        if scenario == "tool-short":
+            path = "PROJECT.md"
+            result = {"content": "Release checklist: tests, screenshots, and a simulator build.", "total_lines": 1}
+        elif scenario == "tool-long":
+            path = "build.log"
+            result = "\n".join([f"{line:04} | Asset catalog check passed" for line in range(1, 3201)]
+                               + ["END OF BUILD LOG"])
+        else:
+            path = "drafts/release-notes.md"
+            name = "terminal"
+            result = {"exit_code": 1, "error": "File not found: drafts/release-notes.md"}
+        identity = {"tool_id": "inspect", "name": name, "args": {"path": path}}
+        if scenario != "tool-failed":
+            self.event("tool.start", dict(identity, context=path))
+            if not self.wait(fixture_id, scenario, "end", self.stopped):
+                return False
+        self.event("tool.complete", dict(identity, duration_s=0.42, result=result))
+        self.event("message.complete", {"text": "The file check is finished."})
         return True
 
     def late_events(self):
@@ -227,7 +270,12 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def write_frame(self, opcode, data):
         size = len(data)
-        header = bytes([128 | opcode, size]) if size < 126 else bytes([128 | opcode, 126]) + struct.pack("!H", size)
+        if size < 126:
+            header = bytes([128 | opcode, size])
+        elif size <= 65535:
+            header = bytes([128 | opcode, 126]) + struct.pack("!H", size)
+        else:
+            header = bytes([128 | opcode, 127]) + struct.pack("!Q", size)
         with self.write_lock:
             self.wfile.write(header + data)
 

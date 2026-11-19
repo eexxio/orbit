@@ -28,18 +28,75 @@ struct HermesToolCall: Codable, Hashable, Sendable {
     /// The server's one-line result summary, when it gives one.
     var summary: String?
     var isDone: Bool
+    var arguments: String?
+    var output: String?
+    var outputLimitedByServer: Bool?
+    var diff: String?
+    var duration: Double?
+    var calledAt: Date?
+    var finishedAt: Date?
+    var isError: Bool?
+    var exitCode: Int?
+    var errorMessage: String?
+    var progress: Double?
+    var progressMessage: String?
+
+    var identity: String { id + ":" + name }
+
+    var cachePreview: Self {
+        Self(id: id, name: name, context: context, summary: summary, isDone: isDone, isError: isError)
+    }
 }
 
 extension HermesToolCall {
+    init?(live payload: JSON) {
+        guard let id = payload["tool_id"].text, let name = payload["name"].text, !name.isEmpty else { return nil }
+        let arguments = payload["args"]
+        self.init(id: id, name: name, context: payload["context"].text ?? Self.preview(of: arguments),
+                  summary: nil, isDone: false, arguments: arguments.rawToolText)
+    }
+
     /// A stored OpenAI-style call, `{id, function: {name, arguments}}`. The arguments are a JSON
     /// string; stored transcripts carry no server-made preview, so pick one telling string from them.
     init?(stored call: JSON) {
         let function = call["function"]
         guard let name = function["name"].text ?? call["name"].text, !name.isEmpty else { return nil }
-        var arguments = function["arguments"]
-        if let raw = arguments.text { arguments = JSON.decode(Data(raw.utf8)) ?? .null }
-        self.init(id: call["id"].text ?? "", name: name, context: Self.preview(of: arguments),
-                  summary: nil, isDone: true)
+        let arguments = function["arguments"]
+        let parsed = arguments.text.flatMap { JSON.decode(Data($0.utf8)) } ?? arguments
+        self.init(id: call["id"].text ?? "", name: name, context: Self.preview(of: parsed),
+                  summary: nil, isDone: false, arguments: arguments.rawToolText)
+    }
+
+    mutating func complete(with payload: JSON) {
+        arguments = payload["args"].rawToolText ?? arguments
+        summary = payload["summary"].text
+        diff = payload["inline_diff"].text
+        if let value = payload["duration_s"].double, value.isFinite, value >= 0 { duration = value }
+        complete(result: payload["result"], isError: payload["is_error"].flag)
+        if let encoded = payload["result"].text, let parsed = JSON.decode(Data(encoded.utf8)) {
+            outputLimitedByServer = parsed["truncated"].flag
+        }
+    }
+
+    mutating func updateProgress(_ payload: JSON) {
+        let percent = payload["percent"].double.map { $0 / 100 }
+        let fraction = payload["total"].double.flatMap { total in
+            total > 0 ? payload["progress"].double.map { $0 / total } : nil
+        }
+        progress = (percent ?? fraction).flatMap { $0.isFinite ? min(max($0, 0), 1) : nil }
+        progressMessage = payload["message"].text
+    }
+
+    mutating func complete(result: JSON, isError: Bool? = nil) {
+        isDone = true
+        output = result.rawToolText
+        let parsed = result.text.flatMap { JSON.decode(Data($0.utf8)) } ?? result
+        exitCode = parsed["exit_code"].int
+        errorMessage = [parsed["user_summary"], parsed["error"]].compactMap(\.text)
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let status = parsed["status"].text?.lowercased()
+        self.isError = isError ?? (parsed["success"].flag == false || parsed["ok"].flag == false
+            || errorMessage != nil || status == "error" || status == "failed" || (exitCode ?? 0) != 0)
     }
 
     private static func preview(of arguments: JSON) -> String {

@@ -10,7 +10,7 @@ struct ChatExportButton: View {
     @State private var showError = false
 
     var body: some View {
-        ShareToolbarControl(tint: accent == .mono ? .label : UIColor(accent.color),
+        ShareToolbarControl(tint: accent == .mono ? nil : UIColor(accent.color),
                             isPreparing: isPreparing, isSharing: isSharing, action: export)
             .frame(width: 44, height: 44)
             .alert("Couldn’t export chat", isPresented: $showError) {
@@ -71,7 +71,7 @@ struct ChatExportButton: View {
 private struct ShareToolbarControl: UIViewRepresentable {
     private static let label = "Export Chat as Markdown"
 
-    let tint: UIColor
+    let tint: UIColor?
     let isPreparing: Bool
     let isSharing: Bool
     let action: (UIButton) -> Void
@@ -90,10 +90,11 @@ private struct ShareToolbarControl: UIViewRepresentable {
     func updateUIView(_ button: UIButton, context: Context) {
         context.coordinator.action = action
         var configuration = UIButton.Configuration.plain()
-        configuration.image = UIImage(systemName: "square.and.arrow.up")
+        let symbol = UIImage(systemName: "square.and.arrow.up")
+        configuration.image = tint.map { symbol?.withTintColor($0, renderingMode: .alwaysOriginal) } ?? symbol
         configuration.showsActivityIndicator = isPreparing
         configuration.contentInsets = .zero
-        configuration.baseForegroundColor = tint
+        configuration.baseForegroundColor = tint ?? .label
         button.configuration = configuration
         button.isEnabled = !isPreparing && !isSharing
         button.accessibilityLabel = isPreparing ? "Preparing Markdown export" : Self.label

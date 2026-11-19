@@ -56,6 +56,14 @@ final class ConversationCache {
 
     // MARK: Conversations
 
+    func removeSession(_ key: String) {
+        index.sessions.removeAll { $0.id == key }
+        index.conversations[key] = nil
+        let url = file(for: key)
+        Self.io.async { try? FileManager.default.removeItem(at: url) }
+        saveIndex()
+    }
+
     func messages(for key: String) -> [HermesMessage]? {
         guard index.conversations[key] != nil,
               let data = try? Data(contentsOf: file(for: key)),

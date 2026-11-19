@@ -23,19 +23,24 @@ struct ChatInterfaceView: View {
     @FocusState private var composerIsFocused: Bool
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if chat.isLoadingHistory && chat.messages.isEmpty {
-                    loadingState
-                } else if chat.messages.isEmpty {
-                    emptyState
-                } else {
-                    conversation
-                }
+        Group {
+            if chat.isLoadingHistory && chat.messages.isEmpty {
+                loadingState
+            } else if chat.messages.isEmpty {
+                emptyState
+            } else {
+                conversation
             }
-            .background(Color(uiColor: .systemBackground))
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                composer
+        }
+        .background(Color(uiColor: .systemBackground))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            composer
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if chat.canExport {
+                    ChatExportButton(chat: chat)
+                }
             }
         }
         .task { await chat.loadHistory() }

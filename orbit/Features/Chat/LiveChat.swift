@@ -13,11 +13,26 @@ final class LiveChat {
         case interrupted(String), failed(String)
 
         var isActive: Bool { self == .waiting || self == .streaming }
+
+        var exportNote: MarkdownTranscript.ReplyNote? {
+            switch self {
+            case .waiting, .streaming: .inProgress
+            case .interrupted: .interrupted
+            case .failed: .failed
+            case .idle, .completed, .stopped: nil
+            }
+        }
     }
 
     /// The stored session key; nil for a new chat until the host assigns one.
     private(set) var key: String?
     var messages: [ChatMessage] = []
+    var transcript: [HermesMessage] {
+        messages.filter { $0.id != historyErrorID }.map(\.item)
+    }
+    var canExport: Bool {
+        messages.contains { $0.id != historyErrorID && MarkdownTranscript.includes($0.item) }
+    }
     private(set) var replyState: ReplyState = .idle
     var isGenerating: Bool { replyState.isActive }
     /// True while an existing chat's history loads and nothing is cached to show.
@@ -37,6 +52,7 @@ final class LiveChat {
     @ObservationIgnored private var conversation: HermesConversation?
     @ObservationIgnored private var latestPromptID: UUID?
     @ObservationIgnored private var pendingInterrupt: Task<Void, Never>?
+    private var historyErrorID: UUID?
 
     init(key: String?) { self.key = key }
 
@@ -64,7 +80,9 @@ final class LiveChat {
         } catch {
             // Offline with a cached copy: keep showing it.
             if messages.isEmpty {
-                messages.append(ChatMessage(text: "⚠️ \(error.localizedDescription)", isUser: false))
+                let errorRow = ChatMessage(text: "⚠️ \(error.localizedDescription)", isUser: false)
+                historyErrorID = errorRow.id
+                messages.append(errorRow)
             }
         }
     }
@@ -230,9 +248,6 @@ final class LiveChat {
             break
         }
         if let key {
-            let transcript = messages
-                .filter { !($0.role == "assistant" && $0.text.hasPrefix("⚠️ ")) }
-                .map(\.item)
             HermesClient.shared.cacheMessages(transcript, for: key)
         }
         Task { await HermesClient.shared.refreshSessions() }

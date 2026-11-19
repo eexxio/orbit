@@ -15,6 +15,7 @@ All notable changes to this project are documented here. The format follows
 - Chat list with search, and new chats.
 - Streaming chat over the Hermes gateway WebSocket, with Markdown-rendered replies.
 - On-device cache of the most recent conversations for instant and offline reading.
+- Export a chat as a Markdown file, even when reading it offline.
 - Redesigned composer that stays pinned above the keyboard.
 - Opening the keyboard pushes the conversation up so the latest messages stay visible above it.
 - A plainer new-chat screen that shows the profile, server and connection status instead of stock prompts.

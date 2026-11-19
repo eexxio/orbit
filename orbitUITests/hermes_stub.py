@@ -31,8 +31,10 @@ EXPORT_MESSAGES = [
     {"id": 1, "role": "user", "content": "Show me a Swift greeting."},
     {"id": 2, "role": "assistant", "content": '⚠️ Here is a Swift greeting:\n\n```swift\nprint("Bună!")\n```',
      "reasoning": "The greeting should be short.",
-     "tool_calls": [{"id": "example", "function": {"name": "check_example", "arguments": "{}"}}]},
-    {"id": 3, "role": "assistant", "content": "More in the [Swift docs](https://swift.org/).\n\n| A | B |\n| - | - |\n| 1 | 2 |"},
+     "tool_calls": [{"id": "example", "function": {"name": "check_example",
+                                                   "arguments": '{"path": "private-example.swift"}'}}]},
+    {"id": 3, "role": "tool", "tool_call_id": "example", "content": "Private tool result."},
+    {"id": 4, "role": "assistant", "content": "More in the [Swift docs](https://swift.org/).\n\n| A | B |\n| - | - |\n| 1 | 2 |"},
 ]
 
 

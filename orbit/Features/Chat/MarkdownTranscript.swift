@@ -5,15 +5,18 @@ nonisolated struct MarkdownTranscript: Sendable {
         case inProgress = "A reply was still in progress at the time of export."
         case interrupted = "The latest reply was interrupted."
         case failed = "The latest reply failed."
+        case stopped = "The latest reply was stopped."
     }
 
     private let title: String
     private let messages: [HermesMessage]
     private let note: ReplyNote?
 
-    init(title: String, messages: [HermesMessage], note: ReplyNote?) {
-        let heading = title.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        self.title = heading.isEmpty ? "Orbit chat" : heading
+    private static let fallbackTitle = "orbit chat"
+
+    init(title: String?, messages: [HermesMessage], note: ReplyNote?) {
+        let heading = title?.split(whereSeparator: \.isWhitespace).joined(separator: " ") ?? ""
+        self.title = heading.isEmpty ? Self.fallbackTitle : heading
         self.messages = messages
         self.note = note
     }
@@ -36,7 +39,7 @@ nonisolated struct MarkdownTranscript: Sendable {
             capped.append(character)
         }
         capped = capped.trimmingCharacters(in: .whitespaces)
-        return (capped.isEmpty ? "Orbit chat" : capped) + ".md"
+        return (capped.isEmpty ? Self.fallbackTitle : capped) + ".md"
     }
 
     private var markdown: String {
@@ -60,6 +63,10 @@ nonisolated struct MarkdownTranscript: Sendable {
             let text = message.text.replacingOccurrences(of: "\r\n", with: "\n")
                 .replacingOccurrences(of: "\r", with: "\n")
             sections.append(text)
+        }
+        if note == .stopped {
+            if !previousWasAssistant { sections.append("## Assistant") }
+            sections.append("*Stopped*")
         }
         return sections.joined(separator: "\n\n") + "\n"
     }

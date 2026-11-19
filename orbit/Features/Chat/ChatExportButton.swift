@@ -26,13 +26,18 @@ struct ChatExportButton: View {
         guard !isPreparing, !isSharing else { return }
         let messages = chat.transcript.filter(MarkdownTranscript.includes)
         guard !messages.isEmpty else { return }
-        let title = HermesClient.shared.sessions.first { $0.id == chat.key }?.title ?? "Orbit chat"
+        let title = HermesClient.shared.sessions.first { $0.id == chat.key }?.title
         let snapshot = MarkdownTranscript(title: title, messages: messages, note: chat.replyState.exportNote)
         isPreparing = true
 
         Task {
             do {
                 let file = try await Task.detached(priority: .userInitiated) { try snapshot.stage() }.value
+#if DEBUG && targetEnvironment(simulator)
+                if let path = UserDefaults.standard.string(forKey: "uiTest.markdownExportPath") {
+                    try? FileManager.default.copyItem(at: file, to: URL(fileURLWithPath: path))
+                }
+#endif
                 isSharing = share(file, from: anchor) {
                     isSharing = false
                 }
@@ -53,27 +58,9 @@ struct ChatExportButton: View {
         while let presented = host.presentedViewController { host = presented }
         guard !host.isBeingDismissed else { return false }
 
-        let provider = NSItemProvider()
-        provider.suggestedName = file.lastPathComponent
-        provider.registerFileRepresentation(for: .markdown) { completion in
-            completion(file, false, nil)
-            return nil
-        }
-        let metadata = LPLinkMetadata()
-        metadata.title = file.lastPathComponent
-        let configuration = UIActivityItemsConfiguration(itemProviders: [provider])
-        let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: [String: Any]]
-        let iconNames = icons?["CFBundlePrimaryIcon"]?["CFBundleIconFiles"] as? [String]
-        if let name = iconNames?.last, let icon = UIImage(named: name) {
-            let iconProvider = NSItemProvider(object: icon)
-            metadata.iconProvider = iconProvider
-            metadata.imageProvider = iconProvider
-            configuration.previewProvider = { _, _, _ in iconProvider }
-        }
-        configuration.perItemMetadataProvider = { _, key in
-            key == .linkPresentationMetadata ? metadata : nil
-        }
-        let controller = UIActivityViewController(activityItemsConfiguration: configuration)
+        let controller = UIActivityViewController(
+            activityItems: [MarkdownShareItem(file: file)], applicationActivities: nil
+        )
         controller.popoverPresentationController?.sourceView = anchor
         controller.popoverPresentationController?.sourceRect = anchor.bounds
         controller.completionWithItemsHandler = { [weak anchor] _, _, _, _ in
@@ -87,6 +74,41 @@ struct ChatExportButton: View {
         }
         host.present(controller, animated: true)
         return true
+    }
+}
+
+private final class MarkdownShareItem: NSObject, UIActivityItemSource {
+    let file: URL
+
+    init(file: URL) {
+        self.file = file
+    }
+
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        file
+    }
+
+    func activityViewController(_ activityViewController: UIActivityViewController,
+                                itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        file
+    }
+
+    func activityViewController(_ activityViewController: UIActivityViewController,
+                                dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?) -> String {
+        UTType.markdown.identifier
+    }
+
+    func activityViewControllerLinkMetadata(_ activityViewController: UIActivityViewController) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = file.lastPathComponent
+        let icons = Bundle.main.object(forInfoDictionaryKey: "CFBundleIcons") as? [String: [String: Any]]
+        let iconNames = icons?["CFBundlePrimaryIcon"]?["CFBundleIconFiles"] as? [String]
+        if let name = iconNames?.last, let icon = UIImage(named: name) {
+            let provider = NSItemProvider(object: icon)
+            metadata.iconProvider = provider
+            metadata.imageProvider = provider
+        }
+        return metadata
     }
 }
 

@@ -19,7 +19,8 @@ final class LiveChat {
             case .waiting, .streaming: .inProgress
             case .interrupted: .interrupted
             case .failed: .failed
-            case .idle, .completed, .stopped: nil
+            case .stopped: .stopped
+            case .idle, .completed: nil
             }
         }
     }

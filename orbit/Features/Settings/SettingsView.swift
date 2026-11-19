@@ -7,7 +7,7 @@ struct SettingsView: View {
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
     @AppStorage(AppearanceKey.theme) private var theme = Theme.system
     @AppStorage(AppearanceKey.showToolCalls) private var showToolCalls = true
-    @AppStorage(AppearanceKey.readAloud) private var readAloud = ReadAloud.off
+    @AppStorage(AppearanceKey.readAloud) private var readAloud = ReadAloud.defaultValue
 
     var body: some View {
 

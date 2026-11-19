@@ -255,7 +255,10 @@ struct ChatInterfaceView: View {
                                 UIPasteboard.general.string = copyText
                             } label: {
                                 Image(systemName: "doc.on.doc")
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(.rect)
                             }
+                            .buttonStyle(.plain)
                             .accessibilityLabel("Copy reply")
                             .accessibilityIdentifier("chat.reply.completed", isEnabled: isCompletedReply)
 
@@ -288,10 +291,12 @@ struct ChatInterfaceView: View {
             speechTap += 1
         } label: {
             Image(systemName: isSpeaking ? "speaker.wave.2.fill" : "speaker.wave.2")
-                .symbolEffect(.variableColor.iterative, isActive: isSpeaking && !reduceMotion)
+                .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: isSpeaking && !reduceMotion)
                 .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                 .foregroundStyle(dictation.isBusy ? AnyShapeStyle(.tertiary)
                                  : isSpeaking ? AnyShapeStyle(accent.color) : AnyShapeStyle(.secondary))
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .disabled(dictation.isBusy)
@@ -303,7 +308,8 @@ struct ChatInterfaceView: View {
     private func readCompletedReply(wasDictated: Bool) {
         guard chat.isOnScreen, scenePhase == .active, UIApplication.shared.applicationState == .active,
               !dictation.isBusy, !UIAccessibility.isVoiceOverRunning else { return }
-        let setting = ReadAloud(rawValue: UserDefaults.standard.string(forKey: AppearanceKey.readAloud) ?? "")
+        let setting = UserDefaults.standard.string(forKey: AppearanceKey.readAloud)
+            .flatMap(ReadAloud.init(rawValue:)) ?? ReadAloud.defaultValue
         guard setting == .always || (setting == .afterVoice && wasDictated),
               let last = chat.messages.reversed().prefix(while: { !$0.isUser }).first(where: { $0.role == "assistant" }),
               let text = replyCopies[last.id] else { return }

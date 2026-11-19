@@ -72,23 +72,10 @@ struct DictateButton: View {
 }
 
 struct DictationDot: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var dim = false
-
     var body: some View {
         Circle()
-            .fill(.red)
+            .fill(Color(uiColor: .systemRed))
             .frame(width: 6, height: 6)
-            .opacity(dim && !reduceMotion ? 0.35 : 1)
-            .onChange(of: reduceMotion, initial: true) {
-                if reduceMotion {
-                    dim = false
-                } else {
-                    withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                        dim = true
-                    }
-                }
-            }
             .accessibilityHidden(true)
     }
 }

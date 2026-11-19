@@ -12,6 +12,8 @@ enum AppearanceKey {
 enum ReadAloud: String, CaseIterable, Identifiable {
     case off, afterVoice, always
 
+    static let defaultValue: Self = .off
+
     var id: Self { self }
     var name: LocalizedStringKey {
         switch self {

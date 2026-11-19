@@ -5,7 +5,7 @@ final class VoiceInputTests: XCTestCase {
 
     @MainActor
     func testDictationAppendsWithoutSendingAndReplyCanBeRead() {
-        let app = launch()
+        let app = launch(readAloud: "unrecognized-mode")
         let newChat = app.buttons["chats.new"]
         XCTAssertTrue(newChat.waitForExistence(timeout: 10))
         newChat.tap()
@@ -36,6 +36,10 @@ final class VoiceInputTests: XCTestCase {
         send.tap()
         let speak = app.buttons["chat.reply.speak"]
         XCTAssertTrue(speak.waitForExistence(timeout: 10))
+        let copy = app.buttons["chat.reply.completed"]
+        XCTAssertEqual(copy.frame.width, 44, accuracy: 1)
+        XCTAssertEqual(copy.frame.height, 44, accuracy: 1)
+        XCTAssertEqual(speak.frame.size, copy.frame.size)
         XCTAssertEqual(speak.label, "Read reply aloud")
         speak.tap()
         XCTAssertEqual(speak.label, "Stop reading")
@@ -46,6 +50,13 @@ final class VoiceInputTests: XCTestCase {
     }
 
     @MainActor
+    func testUnknownReadAloudPreferenceShowsOff() {
+        let app = launch(readAloud: "unrecognized-mode")
+        XCTAssertEqual(readAloudPicker(in: app).value as? String, "Off")
+        screenshot("voice-read-aloud-settings")
+    }
+
+    @MainActor
     func testReadAloudPreferencePersists() {
         let app = launch()
         let picker = readAloudPicker(in: app)
@@ -53,7 +64,7 @@ final class VoiceInputTests: XCTestCase {
         XCTAssertEqual(picker.value as? String, "Off")
         select("afterVoice", using: picker, in: app)
         XCTAssertEqual(picker.value as? String, "After voice")
-        screenshot("voice-read-aloud-settings")
+        screenshot("voice-read-aloud-after-voice")
 
         app.terminate()
         app.launch()
@@ -64,13 +75,14 @@ final class VoiceInputTests: XCTestCase {
     }
 
     @MainActor
-    private func launch() -> XCUIApplication {
+    private func launch(readAloud: String? = nil) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = [
             "-hermes.address", address, "-AppleLanguages", "(en)", "-AppleLocale", "en_US",
             "-orbitFakeDictation", "after reconnecting", "-orbitFakeReadAloud",
         ]
+        if let readAloud { app.launchArguments += ["-hermes.readAloud", readAloud] }
         app.launch()
         return app
     }

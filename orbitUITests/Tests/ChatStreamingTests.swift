@@ -44,6 +44,53 @@ final class ChatStreamingTests: XCTestCase {
     }
 
     @MainActor
+    func testCodeBlockPolish() async throws {
+        let app = launchChat()
+        send("Show code blocks", in: app)
+        let copies = app.buttons.matching(identifier: "chat.codeblock.copy")
+        XCTAssertTrue(copies.firstMatch.waitForExistence(timeout: 10))
+        app.swipeDown()
+        let swiftCopy = copies.matching(NSPredicate(format: "label == %@", "Copy swift code")).firstMatch
+        for _ in 0..<4 where !swiftCopy.isHittable { app.swipeDown() }
+        XCTAssertTrue(swiftCopy.isHittable)
+        XCTAssertTrue(app.staticTexts.matching(identifier: "chat.codeblock.language")
+            .matching(NSPredicate(format: "label == %@", "swift")).firstMatch.exists)
+        screenshot("codeblock-swift-unlabeled")
+        swiftCopy.tap()
+        screenshot("codeblock-copied")
+        swiftCopy.tap()
+        XCTAssertEqual(swiftCopy.value as? String, "Copied")
+        XCTAssertTrue(copies.matching(NSPredicate(format: "label == %@", "Copy code")).firstMatch.exists)
+        XCTAssertEqual(app.staticTexts.matching(identifier: "chat.codeblock.language").count, 2)
+        let reset = NSPredicate(format: "value != %@", "Copied")
+        await fulfillment(of: [expectation(for: reset, evaluatedWith: swiftCopy)], timeout: 4)
+        app.swipeUp()
+        screenshot("codeblock-long-line-unscrolled-table")
+        let codeBody = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "json code block")).firstMatch
+        XCTAssertTrue(codeBody.isHittable)
+        codeBody.swipeLeft()
+        screenshot("codeblock-long-line-scrolled")
+        let table = app.scrollViews.allElementsBoundByIndex.last { $0.frame.height < 100 && $0.frame.width > 300 }
+        XCTAssertNotNil(table)
+        table?.swipeLeft()
+        screenshot("codeblock-wide-table-scrolled")
+    }
+
+    @MainActor
+    func testInterruptedCodeRemainsCopyable() async throws {
+        let app = launchChat()
+        send("Interrupt code", in: app)
+        let copy = app.buttons["chat.codeblock.copy"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 10))
+        copy.tap()
+        XCTAssertEqual(copy.value as? String, "Copied")
+        try await advance("code-interrupted", to: "end")
+        XCTAssertTrue(app.staticTexts["chat.reply.interrupted"].waitForExistence(timeout: 10))
+        XCTAssertTrue(copy.isEnabled)
+        screenshot("codeblock-interrupted")
+    }
+
+    @MainActor
     func testReplyStreamsThenCompletes() async throws {
         let app = launchChat()
         send("Complete the reply", in: app)

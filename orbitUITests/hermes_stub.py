@@ -15,6 +15,8 @@ STATS_LOCK = threading.Lock()
 STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
 PARTIAL = "Here is the first part"
 SCENARIOS = {
+    "Show code blocks": "code",
+    "Interrupt code": "code-interrupted",
     "Complete the reply": "complete",
     "Close the connection": "disconnect",
     "Fail the reply": "failure",
@@ -137,6 +139,22 @@ class HermesStub(BaseHTTPRequestHandler):
             pass
 
     def stream_reply(self, fixture_id, text):
+        if text == "Show code blocks":
+            content = ('```swift\nlet x = 1\nprint(x)\n```\n\n'
+                       '```\nunlabeled code\n```\n\n'
+                       '```json\nSTART' + '0123456789' * 20 + 'END\n```\n\n'
+                       '| First column | Second column | Third column | Fourth column |\n'
+                       '| --- | --- | --- | --- |\n'
+                       '| ' + 'Wide content ' * 8 + ' | Second value | Third value | Last value |')
+            self.event("message.complete", {"text": content})
+            return True
+        if text == "Interrupt code":
+            content = '```swift\nlet partial = 1'
+            self.event("message.delta", {"text": content})
+            if not self.wait(fixture_id, "code-interrupted", "end"):
+                return False
+            self.write_frame(8, struct.pack("!H", 1001))
+            return False
         if text == "Send after reconnecting":
             self.event("message.complete", {"text": "The next reply arrived."})
             return True

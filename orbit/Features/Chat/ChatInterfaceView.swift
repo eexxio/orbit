@@ -201,7 +201,7 @@ struct ChatInterfaceView: View {
             VStack(alignment: .leading, spacing: 12) {
                 // Full block-level Markdown: headings, lists, code blocks, quotes, tables.
                 Markdown(message.text)
-                    .markdownTheme(.basic)
+                    .markdownTheme(.orbit)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 

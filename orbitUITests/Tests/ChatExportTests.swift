@@ -23,12 +23,11 @@ final class ChatExportTests: XCTestCase {
         screenshot("chat-export-button")
         export.tap()
 
-        let saveToFiles = app.buttons["Save to Files"]
+        let saveToFiles = app.cells["Save to Files"]
         XCTAssertTrue(saveToFiles.waitForExistence(timeout: 10))
-        let filename = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Weekend in Bra")
-        ).firstMatch
+        let filename = app.descendants(matching: .any)["LP.CaptionBar.TopCaption"]
         XCTAssertTrue(filename.exists)
+        XCTAssertEqual(filename.label, "Weekend in Brașov 1")
         screenshot("chat-export-share-sheet")
     }
 

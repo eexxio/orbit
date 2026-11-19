@@ -271,7 +271,8 @@ struct ChatInterfaceView: View {
     // MARK: - Composer
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        let shape = RoundedRectangle(cornerRadius: 22)
+        return HStack(alignment: .bottom, spacing: 8) {
             // Grows with its text up to six lines, then scrolls.
             TextField("Ask anything", text: $draft, axis: .vertical)
                 .focused($composerIsFocused)
@@ -303,7 +304,8 @@ struct ChatInterfaceView: View {
         .frame(maxWidth: composerIsCollapsed ? 240 : columnWidth)
         .contentShape(.rect)
         .onTapGesture { composerIsFocused = true }
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
+        .background(Color(uiColor: .systemBackground).opacity(isFollowingBottom ? 0 : 1), in: shape)
+        .glassEffect(.regular.interactive(), in: shape)
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
         .animation(.spring(duration: 0.4, bounce: 0.2), value: composerIsCollapsed)

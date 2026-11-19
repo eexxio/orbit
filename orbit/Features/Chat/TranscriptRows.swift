@@ -126,6 +126,7 @@ struct JumpToLatestButton: View {
                 .contentShape(.circle)
         }
         .buttonStyle(.plain)
+        .background(Color(uiColor: .systemBackground), in: .circle)
         .glassEffect(.regular.interactive(), in: .circle)
         .accessibilityLabel("Jump to latest")
     }

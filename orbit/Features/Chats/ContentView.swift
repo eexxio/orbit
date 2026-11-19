@@ -106,7 +106,7 @@ struct ChatListView: View {
             } message: {
                 if let chat = pendingDelete {
                     Text(client.replyingKeys.contains(chat.id)
-                         ? "\(chat.title) is still replying. Deleting removes the chat and its history from \(host)."
+                         ? "\(chat.title) is still replying. Deleting stops the reply and removes the chat from \(host)."
                          : "This deletes the chat and its history from \(host). You can't undo this.")
                 }
             }

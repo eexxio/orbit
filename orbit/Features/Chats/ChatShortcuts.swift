@@ -5,7 +5,7 @@ enum ChatShortcut: CaseIterable {
     case focusComposer, send, stop, settings, showShortcuts
 
     enum Group: String, CaseIterable {
-        case file = "File", view = "View", chat = "Chat", orbit = "Orbit", help = "Help"
+        case file = "File", view = "View", chat = "Chat", orbit = "orbit", help = "Help"
     }
 
     var group: Group {

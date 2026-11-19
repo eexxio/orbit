@@ -92,23 +92,33 @@ final class IPadLayoutTests: XCTestCase {
         composer.typeText("First window draft")
         app.typeKey("o", modifierFlags: [.command, .option])
 
-        let send = app.buttons["chat.send"]
-        XCTAssertTrue(send.waitForExistence(timeout: 10))
-        XCTAssertFalse(send.isEnabled)
-        XCTAssertTrue(app.navigationBars["Project notes"].waitForExistence(timeout: 5))
-        composer.tap()
-        composer.typeText("Stop the reply")
-        send.tap()
+        let source = app.windows.containing(NSPredicate(
+            format: "identifier == %@ AND value == %@", "chat.composer", "First window draft"
+        )).firstMatch
+        let other = app.windows.containing(NSPredicate(
+            format: "identifier == %@ AND enabled == NO", "chat.send"
+        )).firstMatch
+        XCTAssertTrue(other.waitForExistence(timeout: 10))
+        XCTAssertTrue(other.navigationBars["Project notes"].exists)
+        XCTAssertTrue(source.exists)
+        let otherComposer = other.descendants(matching: .any)["chat.composer"].firstMatch
+        otherComposer.tap()
+        otherComposer.typeText("Stop the reply")
+        // Typing enables Send, so use the new draft to identify this window.
+        let sendingWindow = app.windows.containing(NSPredicate(
+            format: "identifier == %@ AND value == %@", "chat.composer", "Stop the reply"
+        )).firstMatch
+        sendingWindow.buttons["chat.send"].tap()
         try await advanceReply("delta")
-        let streaming = app.staticTexts["chat.reply.streaming"]
-        XCTAssertTrue(streaming.waitForExistence(timeout: 5))
+        let streaming = source.staticTexts["chat.reply.streaming"]
+        XCTAssertTrue(streaming.waitForExistence(timeout: 10))
 
         app.typeKey("w", modifierFlags: .command)
         let firstDraft = NSPredicate(format: "value == %@", "First window draft")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: firstDraft, object: composer)], timeout: 10),
                        .completed)
         XCTAssertTrue(streaming.exists)
-        app.buttons["chat.stop"].tap()
+        source.buttons["chat.stop"].tap()
         try await advanceReply("interrupted")
         XCTAssertTrue(app.staticTexts["chat.reply.stopped"].waitForExistence(timeout: 5))
         XCTAssertEqual(composer.value as? String, "First window draft")

@@ -158,8 +158,8 @@ struct ChatInterfaceView: View {
                     replyStatus.padding(.top, isWorkspace ? 12 : 0)
                 }
                 .scrollTargetLayout()
-                .padding(.horizontal, 18)
-                .frame(maxWidth: isWorkspace ? 840 : .infinity)
+                .frame(width: isWorkspace ? min(720, max(0, proxy.size.width - 48)) : nil)
+                .padding(.horizontal, isWorkspace ? 24 : 18)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
                 // A conversation stacks up from the composer: a short one sits just above

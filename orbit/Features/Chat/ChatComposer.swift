@@ -20,6 +20,7 @@ struct ChatComposer<Content: View>: View {
     @State private var catalog = HermesCommandCatalog.fallback
     @State private var running: String?
     @State private var commandError: String?
+    @State private var unsupportedCommand = false
     @State private var requestID = UUID()
     @State private var draftRevision = UUID()
     private var catalogScope: String {
@@ -40,11 +41,26 @@ struct ChatComposer<Content: View>: View {
             }
             if let selected {
                 HStack {
-                    Text(chat.isGenerating ? "Run when the reply ends" : "Run /\(selected.name)")
+                    if !unsupportedCommand {
+                        Button(action: submit) {
+                            Text(chat.isGenerating ? "Run when the reply ends" : "Run /\(selected.name)")
+                                .fontWeight(.semibold).foregroundStyle(.primary)
+                                .frame(minHeight: 44).contentShape(.rect)
+                        }
+                        .disabled(!canSubmit)
                         .accessibilityIdentifier("slash.armed")
+                    }
                     Spacer()
-                    Button("Use as message") { self.selected = nil; showPicker = false }
-                        .accessibilityIdentifier("slash.useAsMessage")
+                    Button {
+                        self.selected = nil
+                        commandError = nil
+                        unsupportedCommand = false
+                        showPicker = false
+                    } label: {
+                        Text("Use as message").foregroundStyle(.secondary)
+                            .frame(minHeight: 44).contentShape(.rect)
+                    }
+                    .accessibilityIdentifier("slash.useAsMessage")
                 }
                 .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 20)
             }
@@ -90,6 +106,7 @@ struct ChatComposer<Content: View>: View {
             requestID = UUID()
             running = nil
             commandError = nil
+            unsupportedCommand = false
             selected = nil
             catalog = .fallback
             let scope = catalogScope
@@ -112,6 +129,7 @@ struct ChatComposer<Content: View>: View {
                 draftRevision = UUID()
                 selected = nil
                 commandError = nil
+                unsupportedCommand = false
                 showPicker = eligible
             } selectionChanged: { eligible in
                 if !eligible { showPicker = false }
@@ -121,26 +139,28 @@ struct ChatComposer<Content: View>: View {
                     if selected == nil, ComposerTextView.isTrigger(draft) { showPicker = true }
                 }
 
-            Button {
-                if chat.isGenerating {
-                    stopCount += 1
-                    chat.stop()
-                    AccessibilityNotification.Announcement("Reply stopped").post()
-                } else {
-                    submit()
+            if !unsupportedCommand || selected == nil || chat.isGenerating {
+                Button {
+                    if chat.isGenerating {
+                        stopCount += 1
+                        chat.stop()
+                        AccessibilityNotification.Announcement("Reply stopped").post()
+                    } else {
+                        submit()
+                    }
+                } label: {
+                    Image(systemName: chat.isGenerating ? "stop.circle.fill" : "arrow.up.circle.fill")
+                        .resizable().scaledToFit().frame(width: 30, height: 30)
+                        .contentTransition(.symbolEffect(.replace.downUp))
                 }
-            } label: {
-                Image(systemName: chat.isGenerating ? "stop.circle.fill" : "arrow.up.circle.fill")
-                    .resizable().scaledToFit().frame(width: 30, height: 30)
-                    .contentTransition(.symbolEffect(.replace.downUp))
+                .tint(accent.color).disabled(!chat.isGenerating && !canSubmit).animation(.default, value: canSubmit)
+                .animation(.snappy(duration: 0.2), value: chat.isGenerating)
+                .sensoryFeedback(.impact(weight: .medium), trigger: stopCount)
+                .accessibilityLabel(chat.isGenerating ? "Stop reply" : selected == nil ? "Send" : "Run command")
+                .accessibilityIdentifier(chat.isGenerating ? "chat.stop" : "chat.send")
+                .keyboardShortcut(chat.isGenerating ? KeyboardShortcut(".", modifiers: .command) : nil)
+                .padding(.bottom, 7)
             }
-            .tint(accent.color).disabled(!chat.isGenerating && !canSubmit).animation(.default, value: canSubmit)
-            .animation(.snappy(duration: 0.2), value: chat.isGenerating)
-            .sensoryFeedback(.impact(weight: .medium), trigger: stopCount)
-            .accessibilityLabel(chat.isGenerating ? "Stop reply" : selected == nil ? "Send" : "Run command")
-            .accessibilityIdentifier(chat.isGenerating ? "chat.stop" : "chat.send")
-            .keyboardShortcut(chat.isGenerating ? KeyboardShortcut(".", modifiers: .command) : nil)
-            .padding(.bottom, 7)
         }
         .padding(.leading, 16).padding(.trailing, 7).frame(minHeight: 44)
         .frame(maxWidth: !focused && draft.isEmpty ? 240 : .infinity)
@@ -150,7 +170,7 @@ struct ChatComposer<Content: View>: View {
     }
 
     private var canSubmit: Bool {
-        running == nil && !chat.isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !unsupportedCommand && running == nil && !chat.isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (selected.map { unavailable($0) == nil } ?? true)
     }
 
@@ -162,6 +182,7 @@ struct ChatComposer<Content: View>: View {
     }
 
     private func insert(_ snippet: PromptSnippet) {
+        unsupportedCommand = false
         draftRevision = UUID()
         commandError = nil
         draft = snippet.body
@@ -173,6 +194,7 @@ struct ChatComposer<Content: View>: View {
     }
 
     private func arm(_ command: HermesCommand) {
+        unsupportedCommand = false
         draftRevision = UUID()
         commandError = nil
         draft = "/\(command.name)"
@@ -220,6 +242,7 @@ struct ChatComposer<Content: View>: View {
                 running = nil
                 guard draftRevision == revision, selected?.name == command.name, draft == originalDraft else { return }
                 let unsupported = (error as? HermesRPCError)?.isUnsupported == true
+                unsupportedCommand = unsupported
                 commandError = unsupported ? "This server doesn't support /\(command.name)" : "Couldn't run /\(command.name). Try again."
             }
         }

@@ -31,7 +31,7 @@ struct SlashResultView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     Text(result.output).textSelection(.enabled).accessibilityIdentifier("slash.result.output")
                     if let warning = result.warning, !warning.isEmpty {
-                        Label(warning, systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
+                        Label(warning, systemImage: "info.circle").foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding()
@@ -44,5 +44,6 @@ struct SlashResultView: View {
             }
         }
         .tint(.primary)
+        .presentationDetents([.medium, .large])
     }
 }

@@ -16,7 +16,7 @@ struct HermesCommand: Identifiable {
     var isLocal: Bool { name == "help" }
 
     static let fallback: [HermesCommand] = [
-        .init(name: "help", summary: "See shortcuts available in Orbit"),
+        .init(name: "help", summary: "See shortcuts available in orbit"),
         .init(name: "status", summary: "Show chat details"),
         .init(name: "context", summary: "Show context usage"),
         .init(name: "usage", summary: "Show token usage")

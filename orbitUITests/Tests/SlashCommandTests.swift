@@ -35,7 +35,7 @@ final class SlashCommandTests: XCTestCase {
         shot("filtered")
         app.buttons["slash.command.help"].tap()
         XCTAssertEqual(draft.value as? String, "/help")
-        XCTAssertTrue(app.staticTexts["slash.armed"].exists)
+        XCTAssertTrue(app.buttons["slash.armed"].exists)
         XCTAssertEqual(app.buttons["chat.send"].label, "Run command")
         shot("help-armed")
         app.buttons["chat.send"].tap()
@@ -134,9 +134,11 @@ final class SlashCommandTests: XCTestCase {
         XCTAssertTrue(status.isEnabled)
         status.tap()
         XCTAssertEqual(draft.value as? String, "/status")
+        XCTAssertGreaterThanOrEqual(app.buttons["slash.armed"].frame.height, 44)
+        XCTAssertGreaterThanOrEqual(app.buttons["slash.useAsMessage"].frame.height, 44)
         XCTAssertEqual(app.buttons["chat.send"].label, "Run command")
         shot("command-armed")
-        app.buttons["chat.send"].tap()
+        app.buttons["slash.armed"].tap()
         let output = app.staticTexts["slash.result.output"]
         XCTAssertTrue(output.waitForExistence(timeout: 10))
         XCTAssertEqual(output.label, "Status: ready")
@@ -182,6 +184,13 @@ final class SlashCommandTests: XCTestCase {
             XCTAssertEqual(error.label, scenario == "denied" ? "Couldn't run /status. Try again." : "This server doesn't support /status")
             XCTAssertFalse(app.staticTexts["slash.result.output"].exists)
             XCTAssertEqual(draft.value as? String, "/status")
+            if scenario != "denied" {
+                XCTAssertFalse(app.buttons["slash.armed"].exists)
+                XCTAssertFalse(app.buttons["chat.send"].exists)
+                XCTAssertTrue(app.buttons["slash.useAsMessage"].exists)
+            } else {
+                XCTAssertTrue(app.buttons["slash.armed"].exists)
+            }
             if scenario == "unsupported" { shot("unsupported") }
             let counts = try await state()
             XCTAssertEqual(counts["prompts"], 0)

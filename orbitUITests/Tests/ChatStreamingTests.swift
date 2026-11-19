@@ -250,7 +250,7 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertEqual(field.value as? String, text)
         XCTAssertTrue(button.isEnabled)
         button.tap()
-        let sent = reply(text, in: app)
+        let sent = app.staticTexts.matching(NSPredicate(format: "label == %@", "You: \(text)")).firstMatch
         if !sent.waitForExistence(timeout: 2), field.value as? String == text, button.isEnabled {
             button.tap()
         }

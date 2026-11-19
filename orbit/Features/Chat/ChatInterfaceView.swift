@@ -137,11 +137,14 @@ struct ChatInterfaceView: View {
             .onScrollGeometryChange(for: CGFloat.self) { bottomOffset(in: $0) } action: { old, new in
                 if abs(new - old) > 0.5 { pinIfFollowing() }
             }
+            .onScrollGeometryChange(for: Bool.self) { isNearBottom(in: $0) } action: { _, nearBottom in
+                if isUserScrolling && nearBottom { isFollowingBottom = true }
+            }
             .onScrollPhaseChange { old, new, context in
                 isUserScrolling = new == .tracking || new == .interacting || new == .decelerating
                 guard new == .idle else { return }
                 if old == .interacting || old == .decelerating {
-                    isFollowingBottom = bottomOffset(in: context.geometry) - context.geometry.contentOffset.y <= 40
+                    isFollowingBottom = isNearBottom(in: context.geometry)
                 }
                 if old != .animating { pinIfFollowing() }
             }
@@ -161,6 +164,10 @@ struct ChatInterfaceView: View {
 
     private func bottomOffset(in geometry: ScrollGeometry) -> CGFloat {
         geometry.contentSize.height + geometry.contentInsets.bottom - geometry.containerSize.height
+    }
+
+    private func isNearBottom(in geometry: ScrollGeometry) -> Bool {
+        geometry.contentSize.height - geometry.visibleRect.maxY <= 40
     }
 
     private func followLatest() {

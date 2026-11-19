@@ -89,6 +89,13 @@ final class LiveChat {
         }
     }
 
+    func stop() {
+        guard isGenerating else { return }
+        adoptKey(conversation?.storedKey)
+        conversation?.interrupt()
+        finishTurn(as: .interrupted("Stopped by you."))
+    }
+
     /// A new chat learns its key from the host; from then on reopening it from the list finds this object.
     private func adoptKey(_ stored: String?) {
         guard key == nil, let stored else { return }

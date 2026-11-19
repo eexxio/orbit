@@ -6,6 +6,7 @@ final class HermesConversation {
     /// The stored session key, once the host has one.
     private(set) var storedKey: String?
     private var runtimeID: String?
+    private var executionGeneration: JSON = .null
     private var socket: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
     private var heartbeat: Task<Void, Never>?
@@ -36,6 +37,7 @@ final class HermesConversation {
         reader = nil; heartbeat = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil; runtimeID = nil
+        executionGeneration = .null
         failPending(HermesError.socketClosed)
     }
 
@@ -46,9 +48,20 @@ final class HermesConversation {
         _ = try await call("prompt.submit", ["session_id": .string(runtimeID), "text": .string(text), "queued": .bool(true)])
     }
 
-    func interrupt() async {
-        guard let runtimeID else { return }
-        _ = try? await call("session.interrupt", ["session_id": .string(runtimeID)])
+    func interrupt() {
+        guard let runtimeID, let task = socket else { close(); return }
+        nextID += 1
+        var params: [String: JSON] = ["session_id": .string(runtimeID)]
+        if executionGeneration != .null { params["execution_generation"] = executionGeneration }
+        let frame: JSON = .object(["jsonrpc": .string("2.0"), "id": .number(Double(nextID)),
+                                   "method": .string("session.interrupt"),
+                                   "params": .object(params)])
+        // Retire this reader before another turn can start: a late final belongs to this turn.
+        task.send(.string(String(decoding: frame.encoded(), as: UTF8.self))) { _ in
+            task.cancel(with: .goingAway, reason: nil)
+        }
+        socket = nil
+        close()
     }
 
     private func open() async throws {
@@ -151,6 +164,7 @@ final class HermesConversation {
 
     private func apply(_ event: JSON) {
         if let session = event["session_id"].text, let runtimeID, session != runtimeID { return }
+        if event["execution_generation"] != .null { executionGeneration = event["execution_generation"] }
         let payload = event["payload"]
         switch event["type"].text ?? "" {
         case "message.delta":

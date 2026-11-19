@@ -71,7 +71,8 @@ final class ChatStreamingTests: XCTestCase {
         draft.tap()
         draft.typeText("My next message")
         let sendButton = app.buttons["chat.send"]
-        XCTAssertFalse(sendButton.isEnabled)
+        XCTAssertFalse(sendButton.exists)
+        XCTAssertTrue(app.buttons["Stop"].isEnabled)
         try await advance("failure", to: "end")
 
         XCTAssertTrue(app.staticTexts["chat.reply.failed"].waitForExistence(timeout: 10))
@@ -80,6 +81,60 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertEqual(draft.value as? String, "My next message")
         XCTAssertTrue(sendButton.isEnabled)
         screenshot("chat-failed")
+    }
+
+    @MainActor
+    func testStopKeepsPartialReplyAndDraft() async throws {
+        try await stopReply("Stop the reply", scenario: "stop")
+    }
+
+    @MainActor
+    func testStopWithoutFinalEvent() async throws {
+        try await stopReply("Stop without final", scenario: "stop-no-final")
+    }
+
+    @MainActor
+    func testStopWithInterruptError() async throws {
+        try await stopReply("Stop with error", scenario: "stop-error")
+    }
+
+    @MainActor
+    func testStopWhileWaiting() {
+        let app = launchChat()
+        send("Stop without final", in: app)
+        let stop = app.buttons["Stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10))
+        stop.tap()
+        XCTAssertTrue(app.staticTexts["chat.reply.interrupted"].waitForExistence(timeout: 10))
+        send("Send after reconnecting", in: app)
+        XCTAssertTrue(reply("The next reply arrived.", in: app).waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    private func stopReply(_ prompt: String, scenario: String) async throws {
+        let app = launchChat()
+        send(prompt, in: app)
+        try await advance(scenario, to: "delta")
+        XCTAssertTrue(app.staticTexts["chat.reply.streaming"].waitForExistence(timeout: 10))
+        let field = composer(in: app)
+        field.tap()
+        field.typeText("Send after reconnecting")
+        XCTAssertTrue(app.buttons["Stop"].isEnabled)
+        screenshot("stop-streaming-\(scenario)")
+        app.buttons["Stop"].tap()
+        try await advance(scenario, to: "interrupted")
+        XCTAssertTrue(app.staticTexts["chat.reply.interrupted"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Stopped by you."].exists)
+        XCTAssertTrue(reply(partial, in: app).exists)
+        XCTAssertFalse(app.staticTexts["chat.reply.streaming"].exists)
+        XCTAssertEqual(field.value as? String, "Send after reconnecting")
+        XCTAssertTrue(app.buttons["chat.send"].isEnabled)
+        let tool = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "get_weather")).firstMatch
+        XCTAssertEqual(tool.value as? String, "Tool result not received")
+        screenshot("stop-stopped-\(scenario)")
+        app.buttons["chat.send"].tap()
+        XCTAssertTrue(reply("The next reply arrived.", in: app).waitForExistence(timeout: 10))
     }
 
     @MainActor

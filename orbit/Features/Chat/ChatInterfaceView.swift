@@ -241,20 +241,20 @@ struct ChatInterfaceView: View {
                 .accessibilityIdentifier("chat.composer")
 
             Button {
-                sendMessage()
+                if chat.isGenerating { chat.stop() } else { sendMessage() }
             } label: {
                 // Resizable so the circle fills exactly 30pt; a font-sized symbol
                 // carries extra baseline space below it and sits off-center.
-                Image(systemName: "arrow.up.circle.fill")
+                Image(systemName: chat.isGenerating ? "stop.circle.fill" : "arrow.up.circle.fill")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 30, height: 30)
             }
             .tint(accent.color)
-            .disabled(!canSend)
+            .disabled(!chat.isGenerating && !canSend)
             .animation(.default, value: canSend)
-            .accessibilityLabel("Send")
-            .accessibilityIdentifier("chat.send")
+            .accessibilityLabel(chat.isGenerating ? "Stop" : "Send")
+            .accessibilityIdentifier(chat.isGenerating ? "Stop" : "chat.send")
             .padding(.bottom, 7)
         }
         .padding(.leading, 16)

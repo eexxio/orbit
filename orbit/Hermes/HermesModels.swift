@@ -16,8 +16,15 @@ struct HermesMessage: Codable, Hashable, Sendable {
     /// How fast this reply streamed. Only the device saw that, so it lives in the cache alone;
     /// optional so older cached conversations still decode.
     var rate: TokenRate? = nil
+    var attachments: [HermesAttachmentRef]? = nil
 
     var isUser: Bool { role == "user" }
+}
+
+struct HermesAttachmentRef: Codable, Hashable, Sendable {
+    var kind: String
+    var name: String
+    var thumbnail: Data? = nil
 }
 
 struct HermesToolCall: Codable, Hashable, Sendable {

@@ -69,9 +69,10 @@ final class LiveChat {
         }
     }
 
-    func send(_ text: String) {
+    func send(_ text: String, attachments: [DraftAttachment] = []) {
         guard !isGenerating else { return }
-        let prompt = ChatMessage(text: text, isUser: true)
+        var prompt = ChatMessage(text: text, isUser: true)
+        prompt.item.attachments = attachments.isEmpty ? nil : attachments.map(\.descriptor)
         messages.append(prompt)
         latestPromptID = prompt.id
         replyState = .waiting
@@ -82,7 +83,7 @@ final class LiveChat {
             guard isGenerating, latestPromptID == prompt.id else { return }
             let chat = conversation ?? makeConversation()
             do {
-                try await chat.send(text)
+                try await chat.send(text, attachments: attachments.compactMap(\.outgoing))
                 guard conversation === chat else { return }
                 adoptKey(chat.storedKey)
             } catch {

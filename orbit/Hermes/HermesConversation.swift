@@ -41,11 +41,48 @@ final class HermesConversation {
     }
 
     /// Sends one prompt, opening the socket and session first when needed.
-    func send(_ text: String) async throws {
+    func send(_ text: String, attachments: [OutgoingAttachment] = []) async throws {
         if socket == nil || runtimeID == nil { try await open() }
         guard let runtimeID else { throw HermesError.unsupported }
         acceptsReplyEvents = true
-        _ = try await call("prompt.submit", ["session_id": .string(runtimeID), "text": .string(text), "queued": .bool(true)])
+        var paths: [String] = []
+        var images: [JSON] = []
+        var prompt = text
+        var currentName = "attachment"
+        var method = ""
+        do {
+            for attachment in attachments {
+                currentName = attachment.name
+                try Task.checkCancellation()
+                let result: JSON
+                if attachment.kind == .image {
+                    method = "image.attach_bytes"
+                    result = try await call(method, ["session_id": .string(runtimeID), "filename": .string(attachment.name), "content_base64": .string(attachment.payload.base64EncodedString())])
+                    guard let path = result["path"].text, !path.isEmpty else { throw HermesError.unsupported }
+                    paths.append(path)
+                    images.append(.object(["path": .string(path), "mime": .string(result["mime"].text ?? attachment.mime)]))
+                    if prompt.isEmpty { prompt = result["text"].text ?? "[User attached image: \(attachment.name)]" }
+                } else {
+                    method = "file.attach"
+                    result = try await call(method, ["session_id": .string(runtimeID), "name": .string(attachment.name), "data_url": .string("data:\(attachment.mime);base64,\(attachment.payload.base64EncodedString())")])
+                    guard let ref = result["ref_text"].text, !ref.isEmpty else { throw HermesError.unsupported }
+                    prompt += (prompt.isEmpty ? "" : "\n") + ref
+                }
+            }
+            try Task.checkCancellation()
+        } catch {
+            for path in paths { _ = try? await call("image.detach", ["session_id": .string(runtimeID), "path": .string(path)]) }
+            if case HermesError.rpc(let code, let message) = error,
+               code == -32601 || ((code == 4000 || message.contains("invalid_params")) && message.contains(method)) {
+                client.supportsAttachments = false
+                throw HermesError.attachmentsUnsupported
+            }
+            throw HermesError.server("Couldn't send \(currentName): \(error.localizedDescription)")
+        }
+        if !attachments.isEmpty { client.supportsAttachments = true }
+        var params: [String: JSON] = ["session_id": .string(runtimeID), "text": .string(prompt), "queued": .bool(true), "input_id": .string(UUID().uuidString)]
+        if !images.isEmpty { params["attachments"] = .array(images) }
+        _ = try await call("prompt.submit", params)
     }
 
     func interrupt(timeout: Duration) async -> Bool {
@@ -159,7 +196,7 @@ final class HermesConversation {
         }
         guard let id = frame["id"].int, let continuation = pending.removeValue(forKey: id) else { return }
         if frame["error"] != .null {
-            continuation.resume(throwing: HermesError.server(frame["error"]["message"].text ?? "The server refused the request."))
+            continuation.resume(throwing: HermesError.rpc(frame["error"]["code"].int ?? 0, frame["error"]["message"].text ?? "The server refused the request."))
         } else {
             continuation.resume(returning: frame["result"])
         }

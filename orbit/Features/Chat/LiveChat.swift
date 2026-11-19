@@ -30,12 +30,14 @@ final class LiveChat {
     var isOnScreen = false {
         didSet { if !isOnScreen { releaseIfIdle() } }
     }
+    @ObservationIgnored var onReplyCompleted: ((Bool) -> Void)?
 
     /// When the current reply's first word arrived, for its tokens-per-second rate.
     @ObservationIgnored private var streamStart: Date?
     @ObservationIgnored private var loadedHistory = false
     @ObservationIgnored private var conversation: HermesConversation?
     @ObservationIgnored private var latestPromptID: UUID?
+    @ObservationIgnored private var promptWasDictated = false
 
     init(key: String?) { self.key = key }
 
@@ -68,11 +70,12 @@ final class LiveChat {
         }
     }
 
-    func send(_ text: String) {
+    func send(_ text: String, wasDictated: Bool = false) {
         guard !isGenerating else { return }
         let prompt = ChatMessage(text: text, isUser: true)
         messages.append(prompt)
         latestPromptID = prompt.id
+        promptWasDictated = wasDictated
         replyState = .waiting
         // Held while the turn runs, even if the screen goes away.
         if let key { HermesClient.shared.keepLive(self, as: key) }
@@ -201,6 +204,7 @@ final class LiveChat {
         liveToolIDs.removeAll()
         streamStart = nil
         replyState = state
+        if state == .completed, isOnScreen { onReplyCompleted?(promptWasDictated) }
         adoptKey(conversation?.storedKey)
         switch state {
         case .failed, .interrupted:

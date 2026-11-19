@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
     @AppStorage(AppearanceKey.theme) private var theme = Theme.system
     @AppStorage(AppearanceKey.showToolCalls) private var showToolCalls = true
+    @AppStorage(AppearanceKey.readAloud) private var readAloud = ReadAloud.off
 
     var body: some View {
 
@@ -135,10 +136,23 @@ struct SettingsView: View {
                     Text("Show tool calls")
                 }
             }
+            Picker(selection: $readAloud) {
+                ForEach(ReadAloud.allCases) { option in
+                    Text(option.name).tag(option)
+                        .accessibilityIdentifier("settings.readAloud.\(option.rawValue)")
+                }
+            } label: {
+                SettingsField(icon: "speaker.wave.2") {
+                    Text("Read replies aloud")
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityValue(Text(readAloud.name))
+            .accessibilityIdentifier("settings.readAloud")
         } header: {
             Text("Chat")
         } footer: {
-            Text("Show the commands, file reads and other tools the agent runs while it works.")
+            Text("Show the commands, file reads and other tools the agent runs while it works. Read replies aloud speaks each finished reply while the chat is open. After voice only reads replies to messages you dictated.")
         }
     }
 

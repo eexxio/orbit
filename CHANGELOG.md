@@ -24,6 +24,9 @@ All notable changes to this project are documented here. The format follows
 - A Settings toggle to show or hide the agent's tool calls in chats.
 - The "Thinking…" indicator shown while the agent works matches the thinking block, and steps aside while a tool call shows its own spinner.
 
+### Changed
+- Lower the minimum iOS and iPadOS version to 27.0, so the app builds with Xcode 27.0.
+
 ### Fixed
 - Leaving a chat while the agent is replying no longer drops the reply: it keeps streaming, and reopening the chat shows the thinking and the reply as they arrive.
 - A conversation now reads up from the composer: opening a chat lands on its newest message, and a chat too short to fill the screen sits just above the input field instead of hanging from the navigation bar.

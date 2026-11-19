@@ -11,7 +11,7 @@ There is no backend in this repo. The server is someone else's Hermes install.
 
 ## Build and verify
 
-The only toolchain is Xcode 27.2+. There are no scripts, no Makefile, and no package manager besides SwiftPM
+The only toolchain is Xcode 27.0+. There are no scripts, no Makefile, and no package manager besides SwiftPM
 (which Xcode resolves itself).
 
 ```bash

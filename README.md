@@ -9,10 +9,10 @@ Live streaming replies, Markdown rendering and offline reading, with no extra ba
 
 <br>
 
-[![Platform](https://img.shields.io/badge/iOS%20%7C%20iPadOS-27.2%2B-2B2B2B?style=flat-square&logo=apple&logoColor=white)](#requirements)
+[![Platform](https://img.shields.io/badge/iOS%20%7C%20iPadOS-27.0%2B-2B2B2B?style=flat-square&logo=apple&logoColor=white)](#requirements)
 [![Swift](https://img.shields.io/badge/Swift-5-3D3D3D?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-5C5C5C?style=flat-square)](https://developer.apple.com/xcode/swiftui/)
-[![Xcode](https://img.shields.io/badge/Xcode-27.2%2B-808080?style=flat-square&logo=xcode&logoColor=white)](https://developer.apple.com/xcode/)
+[![Xcode](https://img.shields.io/badge/Xcode-27.0%2B-808080?style=flat-square&logo=xcode&logoColor=white)](https://developer.apple.com/xcode/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-B5B5B5?style=flat-square)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-EBEBEB?style=flat-square)](CONTRIBUTING.md)
 
@@ -56,8 +56,8 @@ own.
 
 | Component | Version |
 |---|---|
-| Xcode | 27.2 or later |
-| iOS / iPadOS | 27.2 or later |
+| Xcode | 27.0 or later |
+| iOS / iPadOS | 27.0 or later |
 | Server | A reachable [Hermes Agent](https://github.com/NousResearch/hermes-agent) dashboard (`hermes dashboard`) |
 
 orbit isn't on the App Store yet, so you build it from source. A free Apple developer account is enough to

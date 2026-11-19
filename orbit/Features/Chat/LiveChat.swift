@@ -197,9 +197,7 @@ final class LiveChat {
             guard let self, isGenerating, pendingInterrupt == nil else { return }
             streamingID = nil
             reasoningID = nil
-            var started = tool
-            started.startedAt = .now
-            let message = ChatMessage(HermesMessage(role: "tool", text: "", tool: started))
+            let message = ChatMessage(HermesMessage(role: "tool", text: "", tool: tool))
             liveToolIDs.insert(message.id)
             messages.append(message)
         }

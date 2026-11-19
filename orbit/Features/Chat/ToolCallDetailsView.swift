@@ -143,14 +143,10 @@ struct ToolCallDetailsView: View {
                 status.icon(filled: true).accessibilityHidden(true)
                 Text(status == .unavailable ? "No result received" : status.label)
                     .foregroundStyle(.primary)
-                if status == .running, let start = tool.startedAt {
-                    TimelineView(.periodic(from: start, by: 1)) { date in
-                        Text("· \(durationText(max(0, date.date.timeIntervalSince(start))))")
-                            .monospacedDigit()
-                    }
-                } else if let exit = tool.exitCode, status == .failed {
+                if let exit = tool.exitCode, status == .failed {
                     Text("· exit \(exit)")
-                } else if let seconds = tool.duration {
+                }
+                if let seconds = tool.duration {
                     Text("· \(durationText(seconds))")
                 }
             }
@@ -176,7 +172,7 @@ struct ToolCallDetailsView: View {
     }
 
     @ViewBuilder private func timing(_ tool: HermesToolCall) -> some View {
-        let dates: [(String, Date?)] = [("Started", tool.startedAt), ("Called", tool.calledAt), ("Finished", tool.finishedAt)]
+        let dates: [(String, Date?)] = [("Called", tool.calledAt), ("Finished", tool.finishedAt)]
         let values = dates.compactMap { label, date in date.map { (label, timeText($0)) } }
             + (tool.duration.map { [("Duration", durationText($0))] } ?? [])
         if !values.isEmpty {

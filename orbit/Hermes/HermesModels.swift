@@ -33,7 +33,6 @@ struct HermesToolCall: Codable, Hashable, Sendable {
     var outputLimitedByServer: Bool?
     var diff: String?
     var duration: Double?
-    var startedAt: Date?
     var calledAt: Date?
     var finishedAt: Date?
     var isError: Bool?
@@ -72,7 +71,6 @@ extension HermesToolCall {
         arguments = payload["args"].rawToolText ?? arguments
         summary = payload["summary"].text
         diff = payload["inline_diff"].text
-        finishedAt = .now
         if let value = payload["duration_s"].double, value.isFinite, value >= 0 { duration = value }
         complete(result: payload["result"], isError: payload["is_error"].flag)
         if let encoded = payload["result"].text, let parsed = JSON.decode(Data(encoded.utf8)) {

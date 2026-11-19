@@ -1,5 +1,7 @@
+import LinkPresentation
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct ChatExportButton: View {
     let chat: LiveChat
@@ -16,7 +18,7 @@ struct ChatExportButton: View {
             .alert("Couldn’t export chat", isPresented: $showError) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text("Orbit couldn’t prepare the Markdown file. Try again.")
+                Text("orbit couldn’t prepare the Markdown file. Try again.")
             }
     }
 
@@ -51,7 +53,22 @@ struct ChatExportButton: View {
         while let presented = host.presentedViewController { host = presented }
         guard !host.isBeingDismissed else { return false }
 
-        let controller = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+        let provider = NSItemProvider()
+        provider.suggestedName = file.lastPathComponent
+        provider.registerFileRepresentation(for: .markdown) { completion in
+            completion(file, false, nil)
+            return nil
+        }
+        let metadata = LPLinkMetadata()
+        metadata.title = file.lastPathComponent
+        if let icon = UIImage(systemName: "doc.text") {
+            metadata.iconProvider = NSItemProvider(object: icon)
+        }
+        let configuration = UIActivityItemsConfiguration(itemProviders: [provider])
+        configuration.perItemMetadataProvider = { _, key in
+            key == .linkPresentationMetadata ? metadata : nil
+        }
+        let controller = UIActivityViewController(activityItemsConfiguration: configuration)
         controller.popoverPresentationController?.sourceView = anchor
         controller.popoverPresentationController?.sourceRect = anchor.bounds
         controller.completionWithItemsHandler = { [weak anchor] _, _, _, _ in

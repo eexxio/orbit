@@ -27,7 +27,7 @@ final class ChatExportTests: XCTestCase {
         XCTAssertTrue(saveToFiles.waitForExistence(timeout: 10))
         let filename = app.descendants(matching: .any)["LP.CaptionBar.TopCaption"]
         XCTAssertTrue(filename.exists)
-        XCTAssertEqual(filename.label, "Weekend in Brașov 1")
+        XCTAssertEqual(filename.label, "Weekend in Brașov 1.md")
         screenshot("chat-export-share-sheet")
     }
 

@@ -40,14 +40,12 @@ nonisolated struct MarkdownTranscript: Sendable {
     }
 
     private var markdown: String {
-        let punctuation = CharacterSet(charactersIn: ##"!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"##)
-        let heading = title.map { character in
-            let text = String(character)
-            return text.rangeOfCharacter(from: punctuation) == nil ? text : "\\" + text
-        }.joined()
+        let markers = #"#*[!<~_&`\"#
+        let leading = title.prefix { markers.contains($0) }
+        let heading = leading.map { "\\" + String($0) }.joined() + title.dropFirst(leading.count)
         var sections = [
             "# \(heading)",
-            "This export includes the messages available in Orbit at the time of export.",
+            "This export includes the messages available in orbit at the time of export.",
         ]
         if let note { sections.append("*\(note.rawValue)*") }
 
@@ -61,7 +59,7 @@ nonisolated struct MarkdownTranscript: Sendable {
             previousWasAssistant = message.role == "assistant"
             let text = message.text.replacingOccurrences(of: "\r\n", with: "\n")
                 .replacingOccurrences(of: "\r", with: "\n")
-            sections.append(text.components(separatedBy: "\n").map { "> " + $0 }.joined(separator: "\n"))
+            sections.append(text)
         }
         return sections.joined(separator: "\n\n") + "\n"
     }

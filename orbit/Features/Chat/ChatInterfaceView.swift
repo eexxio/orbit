@@ -41,7 +41,11 @@ struct ChatInterfaceView: View {
                     Text(HermesError.profileGone.localizedDescription)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    Button("New chat") { onNewChat(nil) }
+                    Button { onNewChat(nil) } label: {
+                        Text("New chat")
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
                 }
                 .padding()
             } else {

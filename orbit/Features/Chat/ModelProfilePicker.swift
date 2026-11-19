@@ -195,7 +195,7 @@ struct ModelProfilePicker: View {
     private var rows: some View {
         List {
             if offline {
-                Label("Offline — showing saved list", systemImage: "wifi.slash")
+                Label("Offline: showing saved list", systemImage: "wifi.slash")
                     .foregroundStyle(.secondary)
             }
             if client.profiles.count > 1 && search.isEmpty { profileSection }

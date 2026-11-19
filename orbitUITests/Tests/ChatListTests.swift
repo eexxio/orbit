@@ -60,16 +60,14 @@ final class ChatListTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Renamed ideas"].waitForExistence(timeout: 5))
         older.swipeLeft()
         app.buttons["chats.swipe.delete"].tap()
-        shot("list-delete-confirmation")
-        if app.buttons["Cancel"].exists {
-            app.buttons["Cancel"].tap()
-        } else {
-            app.navigationBars["Chats"].tap()
-        }
+        let deleteAlert = app.alerts["Delete \"Weekend plans\"?"]
+        XCTAssertTrue(deleteAlert.waitForExistence(timeout: 5))
+        shot("list-delete-alert")
+        deleteAlert.buttons["Cancel"].tap()
         XCTAssertTrue(older.exists)
         older.swipeLeft()
         app.buttons["chats.swipe.delete"].tap()
-        app.buttons["chats.delete.confirm"].firstMatch.tap()
+        deleteAlert.buttons["chats.delete.confirm"].firstMatch.tap()
         XCTAssertTrue(older.waitForNonExistence(timeout: 5))
         try await fixture("fail-patch")
         recent.swipeRight()
@@ -111,5 +109,34 @@ final class ChatListTests: XCTestCase {
         let empty = launch()
         XCTAssertTrue(empty.descendants(matching: .any)["chats.empty"].firstMatch.waitForExistence(timeout: 10))
         shot("list-empty")
+    }
+
+    @MainActor func testDarkReplyingPulse() async throws {
+        continueAfterFailure = false
+        try await fixture("seed")
+        let app = launch(dark: true)
+        let recent = row("fixture", app)
+        XCTAssertTrue(recent.waitForExistence(timeout: 10))
+        recent.tap()
+        let composer = app.descendants(matching: .any)["chat.composer"].firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("Complete the reply")
+        app.buttons["chat.send"].tap()
+        try await fixture("complete/delta")
+        XCTAssertTrue(app.staticTexts["chat.reply.streaming"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(recent.waitForExistence(timeout: 5))
+        XCTAssertTrue((recent.value as? String ?? "").contains("Replying"))
+        shot("list-dark-replying")
+        for frame in 1...3 {
+            try await Task.sleep(for: .milliseconds(250))
+            shot("list-dark-replying-pulse-\(frame)")
+        }
+        recent.swipeLeft()
+        app.buttons["chats.swipe.delete"].tap()
+        XCTAssertTrue(app.alerts.staticTexts["Research ideas is still replying. Deleting stops the reply and removes the chat from 127.0.0.1."].exists)
+        app.alerts.buttons["Cancel"].tap()
+        try await fixture("complete/end")
     }
 }

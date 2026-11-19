@@ -40,7 +40,7 @@ struct ChatRow: View {
             else if let timestamp = chat.lastActive {
                 Text(RelativeChatTime.short(Date(timeIntervalSince1970: timestamp), now: now))
             }
-        }.font(.subheadline.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+        }.font(.subheadline.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
     }
 
     private var accessibilityValue: String {

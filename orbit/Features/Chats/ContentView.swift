@@ -39,7 +39,12 @@ struct ContentView: View {
                         }
                     }
                     .animation(.default, value: filtered)
-                    .overlay { if filtered.isEmpty { emptyState } }
+                    .overlay {
+                        if filtered.isEmpty {
+                            emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(Color(uiColor: .systemGroupedBackground))
+                        }
+                    }
                     .refreshable { await client.refreshSessions() }
                 }
             }
@@ -79,9 +84,9 @@ struct ContentView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsView().presentationDetents([.large]).presentationDragIndicator(.visible)
             }
-            .confirmationDialog(pendingDelete.map(deleteTitle) ?? "Delete Chat?", isPresented: Binding(
+            .alert(pendingDelete.map(deleteTitle) ?? "Delete Chat?", isPresented: Binding(
                 get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }
-            ), titleVisibility: .visible) {
+            )) {
                 if let chat = pendingDelete {
                     Button("Delete Chat", role: .destructive) {
                         perform("Delete") { try await client.deleteSession(chat) }

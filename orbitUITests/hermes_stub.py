@@ -13,8 +13,8 @@ from urllib.parse import urlsplit
 GATES = defaultdict(threading.Event)
 STATS_LOCK = threading.Lock()
 STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
-HISTORY = []
-COUNTS = defaultdict(int)
+HISTORY = defaultdict(list)
+COUNTS = defaultdict(lambda: defaultdict(int))
 PARTIAL = "Here is the first part"
 SCENARIOS = {
     "Complete the reply": "complete",
@@ -49,7 +49,7 @@ class HermesStub(BaseHTTPRequestHandler):
             "/api/status": {"auth_required": False, "version": "fixture"},
             "/api/profiles/active": {"current": "default"},
             "/api/sessions": {"sessions": []},
-            "/api/sessions/fixture/messages": {"messages": list(HISTORY)},
+            "/api/sessions/fixture/messages": {"messages": list(HISTORY[fixture_id])},
         }.get(path)
         if data is None:
             self.send_error(404)
@@ -59,8 +59,8 @@ class HermesStub(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlsplit(self.path).path.split("/")
         if len(path) == 4 and path[2:] == ["fixture", "reset"]:
-            HISTORY.clear()
-            COUNTS.clear()
+            HISTORY.pop(path[1], None)
+            COUNTS.pop(path[1], None)
             for key in list(GATES):
                 if key[0] == path[1]:
                     GATES.pop(key, None)
@@ -112,7 +112,7 @@ class HermesStub(BaseHTTPRequestHandler):
                 method = request["method"]
                 if method in {"session.create", "session.resume"}:
                     if method == "session.create":
-                        HISTORY.clear()
+                        HISTORY[fixture_id].clear()
                     self.result(request, {"session_id": "runtime", "stored_session_id": "fixture"})
                 elif method == "gateway.ping":
                     self.result(request, {})
@@ -121,7 +121,7 @@ class HermesStub(BaseHTTPRequestHandler):
                     with STATS_LOCK:
                         STATS[fixture_id]["prompts"] += 1
                     self.result(request, {})
-                    HISTORY.append({"role": "user", "content": request["params"]["text"]})
+                    HISTORY[fixture_id].append({"role": "user", "content": request["params"]["text"]})
                     threading.Thread(target=self.reply, args=(fixture_id, request["params"]["text"]), daemon=True).start()
                 elif method == "session.interrupt":
                     self.interrupt_received.set()
@@ -152,23 +152,24 @@ class HermesStub(BaseHTTPRequestHandler):
             pass
 
     def stream_reply(self, fixture_id, text):
-        COUNTS[text] += 1
+        counts = COUNTS[fixture_id]
+        counts[text] += 1
         if text not in SCENARIOS and text != "Send after reconnecting":
-            if text == "Action failure" and COUNTS[text] == 1:
+            if text == "Action failure" and counts[text] == 1:
                 self.event("message.complete", {"status": "error", "error": "Please try again."})
                 return True
-            answer = f"Reply {COUNTS[text]}: {text}"
+            answer = f"Reply {counts[text]}: {text}"
             if text in {"Tools reply", "Tools failure", "Two tools reply"}:
                 self.event("tool.start", {"tool_id": "lookup", "name": "lookup"})
                 self.event("tool.complete", {"tool_id": "lookup", "summary": "Done"})
                 if text == "Two tools reply":
                     self.event("tool.start", {"tool_id": "check", "name": "check"})
                     self.event("tool.complete", {"tool_id": "check", "summary": "Done"})
-                if text == "Tools failure" and COUNTS[text] == 1:
+                if text == "Tools failure" and counts[text] == 1:
                     self.event("message.complete", {"status": "error", "error": "The tool reply failed."})
                     return True
             self.event("message.complete", {"text": answer})
-            HISTORY.append({"role": "assistant", "content": answer})
+            HISTORY[fixture_id].append({"role": "assistant", "content": answer})
             return True
         if text == "Send after reconnecting":
             self.event("message.complete", {"text": "The next reply arrived."})

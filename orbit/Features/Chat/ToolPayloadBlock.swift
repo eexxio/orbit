@@ -106,7 +106,22 @@ struct ToolPayloadBlock: View {
     }
 
     private func code(_ preview: ToolPayloadPreview) -> some View {
-        let collapsed = preview.lineCount > 24 && !expanded
+        let collapsed = preview.displayedLineCount > 24 && !expanded
+        return VStack(alignment: .leading, spacing: 8) {
+            codeBlock(preview, collapsed: collapsed)
+            if !collapsed && preview.omitted {
+                let copy = "Copy \(title.lowercased()) for the full text."
+                let coverage = preview.displayedLineCount < preview.lineCount
+                    ? "Showing \(preview.displayedLineCount.formatted()) of \(preview.lineCount.formatted()) lines."
+                    : "Some lines are shortened."
+                Text("\(coverage) \(copy)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func codeBlock(_ preview: ToolPayloadPreview, collapsed: Bool) -> some View {
         let shown = collapsed ? preview.collapsed : preview.expanded
         let fill = Color(uiColor: .secondarySystemBackground)
         return VStack(spacing: 0) {
@@ -132,7 +147,7 @@ struct ToolPayloadBlock: View {
             .accessibilityIdentifier("tool.details.\(id)")
             .accessibilityAction(named: Text("Copy")) { copyToolPayload(preview.full, format: false) }
             if collapsed {
-                Button("Show All \(preview.lineCount) Lines") {
+                Button(expandLabel(preview)) {
                     withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { expanded = true }
                 }
                 .font(.subheadline)
@@ -141,15 +156,13 @@ struct ToolPayloadBlock: View {
             }
         }
         .background(fill, in: .rect(cornerRadius: 12))
-        .overlay(alignment: .bottom) {
-            if expanded && preview.omitted {
-                Text("Showing a preview. Copy for the full text.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(6)
-                    .background(fill)
-            }
+    }
+
+    private func expandLabel(_ preview: ToolPayloadPreview) -> String {
+        if preview.displayedLineCount < preview.lineCount {
+            return "Show \(preview.displayedLineCount.formatted()) of \(preview.lineCount.formatted()) Lines"
         }
+        return preview.omitted ? "Show Preview" : "Show All \(preview.lineCount.formatted()) Lines"
     }
 
     private func codeText(_ text: String) -> some View {
@@ -166,6 +179,7 @@ struct ToolPayloadPreview: Sendable {
     let expanded: String
     let bytes: Int
     let lineCount: Int
+    let displayedLineCount: Int
     let omitted: Bool
 
     nonisolated init(_ raw: String) {
@@ -185,7 +199,8 @@ struct ToolPayloadPreview: Sendable {
             remaining -= fragment.count + 1
             cut = cut || truncated
         }
-        omitted = cut || visible.count < lines.count
+        displayedLineCount = visible.count
+        omitted = cut || displayedLineCount < lineCount
         collapsed = visible.prefix(24).joined(separator: "\n")
         expanded = visible.joined(separator: "\n")
     }

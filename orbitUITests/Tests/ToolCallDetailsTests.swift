@@ -40,13 +40,14 @@ final class ToolCallDetailsTests: XCTestCase {
         XCTAssertTrue(app.buttons["chat.reply.completed"].waitForExistence(timeout: 10))
         open(in: app)
         XCTAssertTrue(payload("output", in: app).contains("0001 | Asset catalog check passed"))
+        let expand = app.buttons["tool.details.showAll"]
+        reveal(expand, in: app)
+        XCTAssertEqual(expand.label, "Show 2,000 of 3,201 Lines")
         screenshot("tool-long-output")
-        let showAll = app.buttons["tool.details.showAll"]
-        reveal(showAll, in: app)
-        XCTAssertTrue(showAll.label.contains("3,201"))
-        showAll.tap()
+        expand.tap()
+        XCTAssertTrue(app.staticTexts["Showing 2,000 of 3,201 lines. Copy output for the full text."].exists)
         XCTAssertTrue(app.buttons["tool.details.copy.output"].exists)
-        XCTAssertFalse(showAll.exists)
+        XCTAssertFalse(expand.exists)
     }
 
     func testFailedCompletionCanBeOpenedWithoutAStartEvent() async throws {

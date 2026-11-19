@@ -6,6 +6,44 @@ final class ChatStreamingTests: XCTestCase {
     private let partial = "Here is the first part"
 
     @MainActor
+    func testNewChatAfterCompletedReplyIsBlank() async throws {
+        try await checkNewChatIsBlank(prompt: "Complete the reply", scenario: "complete", status: "completed")
+    }
+
+    @MainActor
+    func testNewChatAfterInterruptedReplyIsBlank() async throws {
+        try await checkNewChatIsBlank(prompt: "Close the connection", scenario: "disconnect", status: "interrupted")
+    }
+
+    @MainActor
+    func testNewChatAfterFailedReplyIsBlank() async throws {
+        try await checkNewChatIsBlank(prompt: "Fail the reply", scenario: "failure", status: "failed")
+    }
+
+    @MainActor
+    private func checkNewChatIsBlank(prompt: String, scenario: String, status: String) async throws {
+        let app = launchChat()
+        XCTAssertTrue(app.staticTexts["New chat"].waitForExistence(timeout: 5))
+        send(prompt, in: app)
+        try await advance(scenario, to: "delta")
+        XCTAssertTrue(app.staticTexts["chat.reply.streaming"].waitForExistence(timeout: 10))
+        try await advance(scenario, to: "end")
+        XCTAssertTrue(app.descendants(matching: .any)["chat.reply.\(status)"].firstMatch.waitForExistence(timeout: 10))
+        app.navigationBars.buttons["Chats"].tap()
+        let newChat = app.buttons["chats.new"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+        newChat.tap()
+        XCTAssertTrue(composer(in: app).waitForExistence(timeout: 5))
+        screenshot("new-chat-after-\(status)")
+        XCTAssertTrue(app.staticTexts["New chat"].waitForExistence(timeout: 5))
+        XCTAssertFalse(reply(prompt, in: app).exists)
+        XCTAssertFalse(reply(partial, in: app).exists)
+        XCTAssertFalse(reply(partial + " and the ending.", in: app).exists)
+        XCTAssertEqual(composer(in: app).value as? String, "")
+        XCTAssertFalse(app.buttons["chat.send"].isEnabled)
+    }
+
+    @MainActor
     func testReplyStreamsThenCompletes() async throws {
         let app = launchChat()
         send("Complete the reply", in: app)

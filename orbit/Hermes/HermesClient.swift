@@ -12,7 +12,7 @@ import Observation
 //   • PUT  /api/profiles/{name}/soul   – `{content}` replaces SOUL.md
 //   • POST /api/auth/ws-ticket         – single-use ticket for the gateway socket
 //   • WS   /api/ws                     – JSON-RPC 2.0 gateway: session.create / session.resume /
-//                                        prompt.submit, streaming `message.delta` / `message.interim` /
+//                                        prompt.submit / session.interrupt, streaming `message.delta` / `message.interim` /
 //                                        `message.complete`, `reasoning.delta` / `reasoning.available`,
 //                                        and `tool.start` / `tool.complete` events.
 

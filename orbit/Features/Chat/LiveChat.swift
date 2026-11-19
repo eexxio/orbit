@@ -9,7 +9,7 @@ import Observation
 @MainActor @Observable
 final class LiveChat {
     enum ReplyState: Equatable {
-        case idle, waiting, streaming, completed
+        case idle, waiting, streaming, completed, stopped
         case interrupted(String), failed(String)
 
         var isActive: Bool { self == .waiting || self == .streaming }
@@ -36,6 +36,7 @@ final class LiveChat {
     @ObservationIgnored private var loadedHistory = false
     @ObservationIgnored private var conversation: HermesConversation?
     @ObservationIgnored private var latestPromptID: UUID?
+    @ObservationIgnored private var pendingInterrupt: Task<Void, Never>?
 
     init(key: String?) { self.key = key }
 
@@ -76,16 +77,33 @@ final class LiveChat {
         replyState = .waiting
         // Held while the turn runs, even if the screen goes away.
         if let key { HermesClient.shared.keepLive(self, as: key) }
-        let chat = conversation ?? makeConversation()
         Task {
+            await pendingInterrupt?.value
+            guard isGenerating, latestPromptID == prompt.id else { return }
+            let chat = conversation ?? makeConversation()
             do {
                 try await chat.send(text)
                 guard conversation === chat else { return }
                 adoptKey(chat.storedKey)
             } catch {
-                guard conversation === chat, isGenerating, latestPromptID == prompt.id else { return }
+                guard conversation === chat, isGenerating, latestPromptID == prompt.id, pendingInterrupt == nil else { return }
                 finishTurn(as: .failed(error.localizedDescription))
             }
+        }
+    }
+
+    func stop() {
+        guard isGenerating else { return }
+        let chat = conversation
+        finishTurn(as: .stopped)
+        guard let chat, pendingInterrupt == nil else { return }
+        pendingInterrupt = Task {
+            let ok = await chat.interrupt(timeout: .seconds(3))
+            if !ok, conversation === chat {
+                chat.close()
+                conversation = nil
+            }
+            pendingInterrupt = nil
         }
     }
 
@@ -115,7 +133,7 @@ final class LiveChat {
         let chat = HermesConversation(storedKey: key)
         // `[weak self]` throughout: the conversation is owned by this object.
         chat.onDelta = { [weak self] delta in
-            guard let self, isGenerating else { return }
+            guard let self, isGenerating, pendingInterrupt == nil else { return }
             replyState = .streaming
             reasoningID = nil
             if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
@@ -133,13 +151,13 @@ final class LiveChat {
         }
         // Text sent before a tool call is its own segment; whatever streams next starts a new one.
         chat.onInterim = { [weak self] text, alreadyStreamed in
-            guard let self, isGenerating else { return }
+            guard let self, isGenerating, pendingInterrupt == nil else { return }
             replyState = .streaming
             if !alreadyStreamed { messages.append(ChatMessage(text: text, isUser: false)) }
             streamingID = nil
         }
         chat.onReasoning = { [weak self] text, replace in
-            guard let self, isGenerating else { return }
+            guard let self, isGenerating, pendingInterrupt == nil else { return }
             streamingID = nil
             if let id = reasoningID, let index = messages.firstIndex(where: { $0.id == id }) {
                 messages[index].text = replace ? text : messages[index].text + text
@@ -150,7 +168,7 @@ final class LiveChat {
             }
         }
         chat.onToolStart = { [weak self] tool in
-            guard let self, isGenerating else { return }
+            guard let self, isGenerating, pendingInterrupt == nil else { return }
             streamingID = nil
             reasoningID = nil
             let message = ChatMessage(HermesMessage(role: "tool", text: "", tool: tool))
@@ -158,7 +176,7 @@ final class LiveChat {
             messages.append(message)
         }
         chat.onToolComplete = { [weak self] id, summary in
-            guard let self, isGenerating,
+            guard let self, isGenerating, pendingInterrupt == nil,
                   let index = messages.lastIndex(where: { $0.tool?.id == id && self.liveToolIDs.contains($0.id) }) else { return }
             liveToolIDs.remove(messages[index].id)
             messages[index].tool?.isDone = true
@@ -166,7 +184,7 @@ final class LiveChat {
         }
         // The final text is the last segment only, so it replaces just that one.
         chat.onComplete = { [weak self] finalText, outputTokens, failure in
-            guard let self, isGenerating else { return }
+            guard let self, isGenerating, pendingInterrupt == nil else { return }
             if let finalText, !finalText.isEmpty {
                 if let id = streamingID, let index = messages.firstIndex(where: { $0.id == id }) {
                     messages[index].text = finalText
@@ -185,10 +203,12 @@ final class LiveChat {
             finishTurn(as: failure.map(ReplyState.failed) ?? .completed)
         }
         chat.onError = { [weak self] message in
-            self?.finishTurn(as: .failed(message))
+            guard let self, pendingInterrupt == nil else { return }
+            finishTurn(as: .failed(message))
         }
         chat.onDisconnect = { [weak self] in
-            self?.finishTurn(as: .interrupted(HermesError.socketClosed.localizedDescription))
+            guard let self, pendingInterrupt == nil else { return }
+            finishTurn(as: .interrupted(HermesError.socketClosed.localizedDescription))
         }
         conversation = chat
         return chat

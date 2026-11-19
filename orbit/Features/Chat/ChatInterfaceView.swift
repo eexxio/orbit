@@ -20,6 +20,7 @@ struct ChatInterfaceView: View {
     @State private var isFollowingBottom = true
     @State private var isUserScrolling = false
     @State private var draft = ""
+    @State private var stopCount = 0
 
     @FocusState private var composerIsFocused: Bool
 
@@ -123,6 +124,8 @@ struct ChatInterfaceView: View {
                     }
 
                     replyStatus
+                        .transition(.opacity)
+                        .animation(.default, value: chat.replyState == .stopped)
                 }
                 .frame(maxWidth: columnWidth)
                 .padding(.horizontal, 18)
@@ -254,7 +257,7 @@ struct ChatInterfaceView: View {
                                     .contentShape(.rect)
                             }
                             .accessibilityLabel("Copy reply")
-                            .accessibilityIdentifier("chat.reply.completed", isEnabled: isCompletedReply)
+                            .accessibilityIdentifier(isCompletedReply ? "chat.reply.completed" : "chat.reply.copy")
                         }
 
                         if let rate = message.rate {
@@ -288,20 +291,30 @@ struct ChatInterfaceView: View {
                 .accessibilityIdentifier("chat.composer")
 
             Button {
-                sendMessage()
+                if chat.isGenerating {
+                    stopCount += 1
+                    chat.stop()
+                    AccessibilityNotification.Announcement("Reply stopped").post()
+                } else {
+                    sendMessage()
+                }
             } label: {
                 // Resizable so the circle fills the frame; a font-sized symbol
                 // carries extra baseline space below it and sits off-center.
-                Image(systemName: "arrow.up.circle.fill")
+                Image(systemName: chat.isGenerating ? "stop.circle.fill" : "arrow.up.circle.fill")
                     .resizable()
                     .scaledToFit()
                     .frame(width: sendIconSize, height: sendIconSize)
+                    .contentTransition(.symbolEffect(.replace.downUp))
             }
             .tint(accent.color)
-            .disabled(!canSend)
+            .disabled(!chat.isGenerating && !canSend)
             .animation(.default, value: canSend)
-            .accessibilityLabel("Send")
-            .accessibilityIdentifier("chat.send")
+            .animation(.snappy(duration: 0.2), value: chat.isGenerating)
+            .sensoryFeedback(.impact(weight: .medium), trigger: stopCount)
+            .accessibilityLabel(chat.isGenerating ? "Stop reply" : "Send")
+            .accessibilityIdentifier(chat.isGenerating ? "chat.stop" : "chat.send")
+            .keyboardShortcut(chat.isGenerating ? KeyboardShortcut(".", modifiers: .command) : nil)
             .padding(.bottom, isPad ? 9 : 7)
         }
         .padding(.leading, 16)
@@ -363,6 +376,15 @@ struct ChatInterfaceView: View {
             ReplyActivityRow(
                 isStreaming: chat.replyState == .streaming
             )
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        case .stopped:
+            HStack(spacing: 6) {
+                Image(systemName: "stop.circle")
+                    .accessibilityHidden(true)
+                Text("Stopped")
+                    .accessibilityIdentifier("chat.reply.stopped")
+            }
             .font(.subheadline)
             .foregroundStyle(.secondary)
         case .interrupted(let detail):

@@ -18,6 +18,7 @@ struct ChatInterfaceView: View {
     @State private var chat: LiveChat
     @State private var scrollPosition = ScrollPosition()
     @State private var draft = ""
+    @State private var stopCount = 0
 
     @FocusState private var composerIsFocused: Bool
 
@@ -113,6 +114,8 @@ struct ChatInterfaceView: View {
                     }
 
                     replyStatus
+                        .transition(.opacity)
+                        .animation(.default, value: chat.replyState)
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 8)
@@ -211,7 +214,7 @@ struct ChatInterfaceView: View {
                                 Image(systemName: "doc.on.doc")
                             }
                             .accessibilityLabel("Copy reply")
-                            .accessibilityIdentifier("chat.reply.completed", isEnabled: isCompletedReply)
+                            .accessibilityIdentifier(isCompletedReply ? "chat.reply.completed" : "chat.reply.copy")
                         }
 
                         if let rate = message.rate {
@@ -241,20 +244,30 @@ struct ChatInterfaceView: View {
                 .accessibilityIdentifier("chat.composer")
 
             Button {
-                sendMessage()
+                if chat.isGenerating {
+                    stopCount += 1
+                    chat.stop()
+                    AccessibilityNotification.Announcement("Reply stopped").post()
+                } else {
+                    sendMessage()
+                }
             } label: {
                 // Resizable so the circle fills exactly 30pt; a font-sized symbol
                 // carries extra baseline space below it and sits off-center.
-                Image(systemName: "arrow.up.circle.fill")
+                Image(systemName: chat.isGenerating ? "stop.circle.fill" : "arrow.up.circle.fill")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 30, height: 30)
+                    .contentTransition(.symbolEffect(.replace.downUp))
             }
             .tint(accent.color)
-            .disabled(!canSend)
+            .disabled(!chat.isGenerating && !canSend)
             .animation(.default, value: canSend)
-            .accessibilityLabel("Send")
-            .accessibilityIdentifier("chat.send")
+            .animation(.snappy(duration: 0.2), value: chat.isGenerating)
+            .sensoryFeedback(.impact(weight: .medium), trigger: stopCount)
+            .accessibilityLabel(chat.isGenerating ? "Stop reply" : "Send")
+            .accessibilityIdentifier(chat.isGenerating ? "chat.stop" : "chat.send")
+            .keyboardShortcut(chat.isGenerating ? KeyboardShortcut(".", modifiers: .command) : nil)
             .padding(.bottom, 7)
         }
         .padding(.leading, 16)
@@ -311,6 +324,15 @@ struct ChatInterfaceView: View {
                 ProgressView().controlSize(.mini).accessibilityHidden(true)
                 Text("Replying…")
                     .accessibilityIdentifier("chat.reply.streaming")
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        case .stopped:
+            HStack(spacing: 6) {
+                Image(systemName: "stop.circle")
+                    .accessibilityHidden(true)
+                Text("Stopped")
+                    .accessibilityIdentifier("chat.reply.stopped")
             }
             .font(.subheadline)
             .foregroundStyle(.secondary)

@@ -111,8 +111,6 @@ struct ReplyActivityRow: View {
                 .contentTransition(.opacity)
                 .accessibilityIdentifier(isStreaming ? "chat.reply.streaming" : "chat.reply.waiting")
         }
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isStreaming)
     }
 }

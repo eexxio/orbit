@@ -119,7 +119,7 @@ struct ChatInterfaceView: View {
                             .padding(.top, transcriptGap(before: message, after: previous))
                     }
 
-                    replyStatus(topGap: messages.last?.isUser == true ? 24 : 12)
+                    replyStatus
                 }
                 .frame(maxWidth: columnWidth)
                 .padding(.horizontal, 18)
@@ -334,17 +334,32 @@ struct ChatInterfaceView: View {
     }
 
     @ViewBuilder
-    private func replyStatus(topGap: CGFloat) -> some View {
+    private var replyStatus: some View {
         switch chat.replyState {
-        case .waiting where showsWaitingIndicator, .streaming:
-            ReplyActivityRow(isStreaming: chat.replyState == .streaming)
-                .padding(.top, topGap)
+        case .idle, .completed:
+            EmptyView()
+        case .waiting where !showsWaitingIndicator:
+            EmptyView()
+        default:
+            let previous = chat.messages.last { showToolCalls || $0.tool == nil }
+            replyStatusRow
+                .padding(.top, previous?.isUser == true ? 24 : 12)
+        }
+    }
+
+    @ViewBuilder
+    private var replyStatusRow: some View {
+        switch chat.replyState {
+        case .waiting, .streaming:
+            ReplyActivityRow(
+                isStreaming: chat.replyState == .streaming
+            )
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
         case .interrupted(let detail):
             replyIssue("Reply interrupted", detail: detail, identifier: "chat.reply.interrupted")
-                .padding(.top, topGap)
         case .failed(let detail):
             replyIssue("Reply failed", detail: detail, identifier: "chat.reply.failed")
-                .padding(.top, topGap)
         default:
             EmptyView()
         }

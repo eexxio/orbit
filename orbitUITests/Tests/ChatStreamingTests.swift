@@ -57,6 +57,7 @@ final class ChatStreamingTests: XCTestCase {
             .matching(NSPredicate(format: "label == %@", "swift")).firstMatch.exists)
         screenshot("codeblock-swift-unlabeled")
         swiftCopy.tap()
+        try await Task.sleep(for: .milliseconds(500))
         screenshot("codeblock-copied")
         swiftCopy.tap()
         XCTAssertEqual(swiftCopy.value as? String, "Copied")
@@ -70,10 +71,28 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertTrue(codeBody.isHittable)
         codeBody.swipeLeft()
         screenshot("codeblock-long-line-scrolled")
-        let table = app.scrollViews.allElementsBoundByIndex.last { $0.frame.height < 100 && $0.frame.width > 300 }
+        let table = app.scrollViews.containing(.staticText, identifier: "First column").allElementsBoundByIndex.last
         XCTAssertNotNil(table)
         table?.swipeLeft()
         screenshot("codeblock-wide-table-scrolled")
+    }
+
+    @MainActor
+    func testCodeBlocksInDarkMode() {
+        let app = launchChat(theme: "dark")
+        send("Show code blocks", in: app)
+        XCTAssertTrue(app.buttons["chat.codeblock.copy"].firstMatch.waitForExistence(timeout: 10))
+        screenshot("codeblock-dark")
+    }
+
+    @MainActor
+    func testEmptyCodeBlockHasNoCopyButton() {
+        let app = launchChat()
+        send("Show empty code", in: app)
+        XCTAssertTrue(app.buttons["chat.reply.completed"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["chat.codeblock"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["chat.codeblock.copy"].exists)
+        XCTAssertFalse(app.staticTexts["chat.codeblock.language"].exists)
     }
 
     @MainActor
@@ -266,10 +285,10 @@ final class ChatStreamingTests: XCTestCase {
     }
 
     @MainActor
-    private func launchChat() -> XCUIApplication {
+    private func launchChat(theme: String = "light") -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["-hermes.address", address, "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchArguments = ["-hermes.address", address, "-hermes.theme", theme, "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
         let newChat = button("chats.new", in: app)
         XCTAssertTrue(newChat.waitForExistence(timeout: 10))

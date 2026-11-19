@@ -1,6 +1,7 @@
 """Loopback-only Hermes REST and WebSocket fixture for the simulator UI tests."""
 
 import base64
+import argparse
 import hashlib
 import json
 import struct
@@ -13,6 +14,9 @@ from urllib.parse import urlsplit
 GATES = defaultdict(threading.Event)
 STATS_LOCK = threading.Lock()
 STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
+HISTORY = []
+COUNTS = defaultdict(int)
+OPTIONS = {"undo": True, "fail_once": False}
 PARTIAL = "Here is the first part"
 SCENARIOS = {
     "Complete the reply": "complete",
@@ -47,6 +51,7 @@ class HermesStub(BaseHTTPRequestHandler):
             "/api/status": {"auth_required": False, "version": "fixture"},
             "/api/profiles/active": {"current": "default"},
             "/api/sessions": {"sessions": []},
+            "/api/sessions/fixture/messages": {"messages": list(HISTORY)},
         }.get(path)
         if data is None:
             self.send_error(404)
@@ -55,6 +60,16 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path.split("/")
+        if len(path) == 5 and path[2:4] == ["fixture", "reset"]:
+            HISTORY.clear()
+            COUNTS.clear()
+            for key in list(GATES):
+                if key[0] == path[1]:
+                    GATES.pop(key, None)
+            OPTIONS.update(undo=path[4] != "fallback", fail_once=path[4] == "fail-undo")
+            self.send_response(204)
+            self.end_headers()
+            return
         if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end", "interrupted"}:
             self.send_error(404)
             return
@@ -99,7 +114,11 @@ class HermesStub(BaseHTTPRequestHandler):
             while (request := self.read_request()) is not None:
                 method = request["method"]
                 if method in {"session.create", "session.resume"}:
+                    if method == "session.create":
+                        HISTORY.clear()
                     self.result(request, {"session_id": "runtime", "stored_session_id": "fixture"})
+                elif method == "session.undo":
+                    self.undo(request)
                 elif method == "gateway.ping":
                     self.result(request, {})
                 elif method == "prompt.submit":
@@ -107,6 +126,7 @@ class HermesStub(BaseHTTPRequestHandler):
                     with STATS_LOCK:
                         STATS[fixture_id]["prompts"] += 1
                     self.result(request, {})
+                    HISTORY.append({"role": "user", "content": request["params"]["text"]})
                     threading.Thread(target=self.reply, args=(fixture_id, request["params"]["text"]), daemon=True).start()
                 elif method == "session.interrupt":
                     self.interrupt_received.set()
@@ -137,6 +157,18 @@ class HermesStub(BaseHTTPRequestHandler):
             pass
 
     def stream_reply(self, fixture_id, text):
+        COUNTS[text] += 1
+        if text not in SCENARIOS and text != "Send after reconnecting":
+            if text == "Action failure" and COUNTS[text] == 1:
+                self.event("message.complete", {"status": "error", "error": "Please try again."})
+                return True
+            answer = f"Reply {COUNTS[text]}: {text}"
+            if text == "Tools reply":
+                self.event("tool.start", {"tool_id": "lookup", "name": "lookup"})
+                self.event("tool.complete", {"tool_id": "lookup", "summary": "Done"})
+            self.event("message.complete", {"text": answer})
+            HISTORY.append({"role": "assistant", "content": answer})
+            return True
         if text == "Send after reconnecting":
             self.event("message.complete", {"text": "The next reply arrived."})
             return True
@@ -182,6 +214,23 @@ class HermesStub(BaseHTTPRequestHandler):
         self.event("tool.complete", {"tool_id": "weather", "summary": "Late tool result"})
         self.event("message.complete", {"text": "Late final", "status": "interrupted"})
         self.event("error", {"message": "Late error"})
+
+    def undo(self, request):
+        if not OPTIONS["undo"]:
+            self.rpc_error(request, -32601, "Method not found")
+        elif not request.get("params", {}).get("session_id"):
+            self.rpc_error(request, -32602, "session_id is required")
+        elif OPTIONS["fail_once"]:
+            OPTIONS["fail_once"] = False
+            self.rpc_error(request, -32000, "The fixture refused to rewind.")
+        else:
+            index = next((i for i in range(len(HISTORY) - 1, -1, -1) if HISTORY[i]["role"] == "user"), len(HISTORY))
+            removed = len(HISTORY) - index
+            del HISTORY[index:]
+            self.result(request, {"removed": removed})
+
+    def rpc_error(self, request, code, message):
+        self.write_json({"jsonrpc": "2.0", "id": request["id"], "error": {"code": code, "message": message}})
 
     @staticmethod
     def wait(fixture_id, scenario, phase, stopped=None):
@@ -233,4 +282,9 @@ class HermesStub(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-undo", action="store_true")
+    parser.add_argument("--fail-undo-once", action="store_true")
+    args = parser.parse_args()
+    OPTIONS.update(undo=not args.no_undo, fail_once=args.fail_undo_once)
     ThreadingHTTPServer(("127.0.0.1", 18765), HermesStub).serve_forever()

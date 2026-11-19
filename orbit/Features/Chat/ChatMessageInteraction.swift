@@ -23,22 +23,21 @@ extension ChatInterfaceView {
                   let row = chat.messages.firstIndex(where: { $0.id == message.id }) else { return false }
             return row > user
         }()
-        let canRegenerate = chat.isIdle && chat.canRewind && inLastReply && !target.isWarning
-        let editTitle: String? = message.isUser && chat.isIdle
-            ? (chat.canRewind ? (message.id == chat.lastUserID ? "Edit" : nil) : "Edit as New Message") : nil
+        let canRegenerate = chat.isIdle && inLastReply && !target.isWarning
+        let editTitle: String? = message.isUser && chat.isIdle ? "Edit as New Message" : nil
         return MessageRowActions(target: target,
                                  enabled: message.isUser || (message.id != chat.streamingID && !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
                                  canRegenerate: canRegenerate, editTitle: editTitle, width: rowWidth,
                                  copy: { copyMessage(target.text) },
                                  select: { selectedText = SelectedMessageText(text: message.text) },
                                  share: { sharedText = SelectedMessageText(text: target.text) },
-                                 regenerate: { requestReplacement(nil, anchorID: message.id) }, edit: { beginEditing(message) })
+                                 regenerate: { requestRegeneration(anchorID: message.id) }, edit: { beginEditing(message) })
     }
 
     var editBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "pencil").accessibilityHidden(true)
-            Text(editsAsNewMessage ? "New message from edit" : "Editing message")
+            Text("New message from edit")
                 .accessibilityIdentifier("chat.edit.banner")
             Spacer()
             Button("Cancel editing", systemImage: "xmark.circle.fill") { cancelEdit() }
@@ -52,16 +51,15 @@ extension ChatInterfaceView {
     }
 
     func beginEditing(_ message: ChatMessage) {
-        guard chat.isIdle, !chat.canRewind || message.id == chat.lastUserID else { return }
+        guard chat.isIdle else { return }
         if editingID == nil { stashedDraft = draft }
         withAnimation(.snappy(duration: 0.25)) {
-            editsAsNewMessage = !chat.canRewind
             editingID = message.id
             draft = message.text
         }
         composerIsFocused = true
         composerSelection = TextSelection(insertionPoint: draft.endIndex)
-        AccessibilityNotification.Announcement("Editing message").post()
+        AccessibilityNotification.Announcement("New message from edit").post()
     }
 
     func cancelEdit() {
@@ -78,58 +76,31 @@ extension ChatInterfaceView {
 
     func validateEditing() {
         guard let editingID else { return }
-        if !chat.isIdle || (!editsAsNewMessage && editingID != chat.lastUserID)
-            || !chat.messages.contains(where: { $0.id == editingID }) { endEditing() }
+        if !chat.isIdle || !chat.messages.contains(where: { $0.id == editingID }) { endEditing() }
     }
 
-    func isDimmed(_ message: ChatMessage) -> Bool {
-        guard !editsAsNewMessage, let editingID,
-              let start = chat.messages.firstIndex(where: { $0.id == editingID }),
-              let row = chat.messages.firstIndex(where: { $0.id == message.id }) else { return false }
-        return row >= start
-    }
-
-    func replacementConfirmation(for anchorID: UUID?) -> MessageReplacementConfirmation {
+    func regenerationConfirmation(for anchorID: UUID?) -> MessageRegenerationConfirmation {
         let presented = Binding {
-            confirmsReplacement && confirmationMessageID == anchorID
+            confirmsRegeneration && confirmationMessageID == anchorID
         } set: { presented in
             guard confirmationMessageID == anchorID else { return }
-            confirmsReplacement = presented
+            confirmsRegeneration = presented
         }
-        return MessageReplacementConfirmation(isPresented: presented, toolCount: chat.lastReplyToolCount,
-                                              regenerate: { performReplacement() }, cancel: { pendingReplacement = nil })
+        return MessageRegenerationConfirmation(isPresented: presented, toolCount: chat.lastReplyToolCount,
+                                               regenerate: { performRegeneration() })
     }
 
-    func requestReplacement(_ text: String?, anchorID: UUID? = nil) {
-        guard chat.isIdle, chat.canRewind else { return }
-        pendingReplacement = text
+    func requestRegeneration(anchorID: UUID? = nil) {
+        guard chat.isIdle else { return }
         confirmationMessageID = anchorID ?? chat.messages.reversed().prefix(while: { !$0.isUser })
             .first(where: { $0.role == "assistant" })?.id
-        if chat.lastReplyToolCount > 0 { confirmsReplacement = true }
-        else { performReplacement() }
+        if chat.lastReplyToolCount > 0 { confirmsRegeneration = true }
+        else { performRegeneration() }
     }
 
-    func performReplacement() {
-        guard chat.isIdle, chat.canRewind else { return }
-        let edited = pendingReplacement
-        let previousID = editingID
-        let previousStash = stashedDraft
-        pendingReplacement = nil
-        endEditing()
-        if edited != nil {
-            draft = ""
-            composerIsFocused = false
-        }
-        Task {
-            if let edited {
-                let succeeded = await chat.resendEdited(edited)
-                if !succeeded, chat.isOnScreen, chat.isIdle {
-                    draft = edited
-                    editingID = previousID
-                    stashedDraft = previousStash
-                    composerIsFocused = true
-                }
-            } else { await chat.regenerate() }
-        }
+    func performRegeneration() {
+        guard chat.isIdle else { return }
+        regenerateCount += 1
+        chat.regenerate()
     }
 }

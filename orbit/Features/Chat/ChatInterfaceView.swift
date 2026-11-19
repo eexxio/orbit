@@ -21,13 +21,12 @@ struct ChatInterfaceView: View {
     @State var composerSelection: TextSelection?
     @State var editingID: UUID?
     @State var stashedDraft: String?
-    @State var editsAsNewMessage = false
     @State var selectedText: SelectedMessageText?
     @State var sharedText: SelectedMessageText?
-    @State var pendingReplacement: String?
-    @State var confirmsReplacement = false
+    @State var confirmsRegeneration = false
     @State var confirmationMessageID: UUID?
     @State var copyCount = 0
+    @State var regenerateCount = 0
     @State var rowWidth: CGFloat = 320
     @State private var stopCount = 0
 
@@ -65,8 +64,7 @@ struct ChatInterfaceView: View {
         .sheet(item: $selectedText) { SelectMessageTextSheet(text: $0.text) }
         .sheet(item: $sharedText) { MessageShareSheet(text: $0.text) }
         .sensoryFeedback(.success, trigger: copyCount)
-        .sensoryFeedback(.impact(weight: .light), trigger: chat.rewindCount)
-        .sensoryFeedback(.error, trigger: chat.rewindFailureCount)
+        .sensoryFeedback(.impact(weight: .light), trigger: regenerateCount)
     }
 
     // MARK: - Loading State
@@ -135,8 +133,6 @@ struct ChatInterfaceView: View {
                     // Hidden tool calls stay in `messages`, so the cache and the toggle keep them.
                     ForEach(showToolCalls ? chat.messages : chat.messages.filter { $0.tool == nil }) { message in
                         messageRow(message, copyText: copies[message.id], isCompletedReply: message.id == completedID)
-                            .opacity(isDimmed(message) ? 0.4 : 1)
-                            .accessibilityHint(isDimmed(message) ? "Will be replaced when you send your edit" : "")
                             .transition(.opacity)
                     }
 
@@ -239,7 +235,7 @@ struct ChatInterfaceView: View {
                     .accessibilityIdentifier("chat.message.reply")
                     .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20))
                     .modifier(actions(for: .reply(segment: message, replyText: replyText(for: message))))
-                    .modifier(replacementConfirmation(for: message.id))
+                    .modifier(regenerationConfirmation(for: message.id))
 
                 if copyText != nil || message.rate != nil {
                     HStack(spacing: 20) {
@@ -337,11 +333,6 @@ struct ChatInterfaceView: View {
 
         guard canSend else { return }
 
-        if editingID != nil && !editsAsNewMessage {
-            requestReplacement(text)
-            return
-        }
-
         endEditing()
         draft = ""
         composerIsFocused = false
@@ -406,8 +397,7 @@ struct ChatInterfaceView: View {
           if chat.isIdle && chat.lastUserID != nil {
               Spacer(minLength: 4)
               Button("Retry", systemImage: "arrow.clockwise") {
-                  if chat.canRewind { requestReplacement(nil) }
-                  else { Task { await chat.retry() } }
+                  requestRegeneration()
               }
               .buttonStyle(.bordered)
               .controlSize(.small)
@@ -415,7 +405,7 @@ struct ChatInterfaceView: View {
               .accessibilityIdentifier("chat.reply.retry")
           }
         }
-        .modifier(replacementConfirmation(for: nil))
+        .modifier(regenerationConfirmation(for: nil))
     }
 
     /// Something is on its way but no row shows it yet. A running tool row has its own spinner.

@@ -3,14 +3,6 @@ import Foundation
 /// One chat: its own gateway socket, the runtime session it resumed or created, and its turns.
 @MainActor
 final class HermesConversation {
-    private struct RPCError: LocalizedError {
-        let code: Int?
-        let message: String
-        var errorDescription: String? { message }
-    }
-
-    private(set) var canRewind = false
-    var onRewindSupport: ((Bool) -> Void)?
     /// The stored session key, once the host has one.
     private(set) var storedKey: String?
     private var runtimeID: String?
@@ -48,10 +40,6 @@ final class HermesConversation {
         failPending(HermesError.socketClosed)
     }
 
-    func prepare() async throws {
-        if socket == nil || runtimeID == nil { try await open() }
-    }
-
     /// Sends one prompt, opening the socket and session first when needed.
     func send(_ text: String) async throws {
         if socket == nil || runtimeID == nil { try await open() }
@@ -69,35 +57,6 @@ final class HermesConversation {
         } catch {
             return false
         }
-    }
-
-    func rewindLastTurn() async throws {
-        if socket == nil || runtimeID == nil { try await open() }
-        guard canRewind, let runtimeID else { throw HermesError.unsupported }
-        do {
-            let result = try await call("session.undo", ["session_id": .string(runtimeID), "intent": .string("retry")])
-            guard let removed = result["removed"].int ?? result["result"]["removed"].int, removed > 0 else {
-                throw HermesError.server("The server did not remove the last turn.")
-            }
-        } catch {
-            if (error as? RPCError)?.code == -32601 {
-                canRewind = false
-                onRewindSupport?(false)
-            }
-            throw error
-        }
-    }
-
-    /// Omitting the session ID probes method support without ever targeting a turn to delete.
-    private func probeRewind() async {
-        canRewind = false
-        do {
-            _ = try await call("session.undo", [:])
-            canRewind = true
-        } catch {
-            canRewind = (error as? RPCError).map { $0.code != -32601 } ?? false
-        }
-        onRewindSupport?(canRewind)
     }
 
     private func open() async throws {
@@ -118,8 +77,6 @@ final class HermesConversation {
         }
         startReader(task)
         startHeartbeat(task)
-        await probeRewind()
-        guard socket === task else { throw HermesError.socketClosed }
 
         let profile = client.profile
         if let storedKey {
@@ -202,8 +159,7 @@ final class HermesConversation {
         }
         guard let id = frame["id"].int, let continuation = pending.removeValue(forKey: id) else { return }
         if frame["error"] != .null {
-            continuation.resume(throwing: RPCError(code: frame["error"]["code"].int,
-                                                  message: frame["error"]["message"].text ?? "The server refused the request."))
+            continuation.resume(throwing: HermesError.server(frame["error"]["message"].text ?? "The server refused the request."))
         } else {
             continuation.resume(returning: frame["result"])
         }

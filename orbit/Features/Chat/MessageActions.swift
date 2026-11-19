@@ -54,16 +54,15 @@ struct MessageActions: View {
     }
 }
 
-struct MessageReplacementConfirmation: ViewModifier {
+struct MessageRegenerationConfirmation: ViewModifier {
     @Binding var isPresented: Bool
     let toolCount: Int
     let regenerate: () -> Void
-    let cancel: () -> Void
 
     func body(content: Content) -> some View {
         content.confirmationDialog("Run this turn again?", isPresented: $isPresented, titleVisibility: .visible) {
             Button("Regenerate", action: regenerate)
-            Button("Cancel", role: .cancel, action: cancel)
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text(toolCount == 1
                  ? "This reply used a tool. Running it again may repeat what it did."

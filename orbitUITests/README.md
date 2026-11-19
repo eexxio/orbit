@@ -19,6 +19,9 @@ The tests use the app's normal REST sign-in and JSON-RPC WebSocket path. They
 advance the fixture after observing each UI state, rather than relying on
 fixed streaming delays. Screenshots are attached to the test result bundle.
 
+Each test uses its own UUID URL prefix (`http://127.0.0.1:18765/<fixture-id>`).
+The fixture paths below are relative to that prefix.
+
 `MessageActionsTests` resets the fixture between tests with `POST /fixture/reset/rewind`,
 `/fixture/reset/fallback` (no undo support), or `/fixture/reset/fail-undo` (one failed undo).
 The fixture also accepts `--no-undo` and `--fail-undo-once` for manual checks.

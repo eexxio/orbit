@@ -136,7 +136,7 @@ struct SettingsView: View {
                 }
             }
             NavigationLink { PromptSnippetsView() } label: {
-                Label("Prompt snippets", systemImage: "text.quote")
+                Label("Prompt snippets", systemImage: "text.alignleft")
             }
             .accessibilityIdentifier("settings.snippets")
         } header: {

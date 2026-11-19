@@ -25,32 +25,7 @@ final class HermesClient {
     enum State: Equatable { case disconnected, connecting, connected, failed(String) }
 
     // Saved configuration
-    private(set) var snippets: [PromptSnippet] = [] {
-        didSet {
-            if let data = try? JSONEncoder().encode(snippets) {
-                UserDefaults.standard.set(data, forKey: "hermes.snippets")
-            }
-        }
-    }
-
-    func saveSnippet(_ snippet: PromptSnippet) {
-        if let index = snippets.firstIndex(where: { $0.id == snippet.id }) {
-            snippets[index] = snippet
-        } else {
-            snippets.append(snippet)
-        }
-    }
-
-    func deleteSnippets(at offsets: IndexSet) {
-        snippets = snippets.enumerated().filter { !offsets.contains($0.offset) }.map(\.element)
-    }
-
-    func moveSnippets(from offsets: IndexSet, to destination: Int) {
-        let moving = snippets.enumerated().filter { offsets.contains($0.offset) }.map(\.element)
-        var remaining = snippets.enumerated().filter { !offsets.contains($0.offset) }.map(\.element)
-        remaining.insert(contentsOf: moving, at: destination - offsets.filter { $0 < destination }.count)
-        snippets = remaining
-    }
+    let snippetStore = PromptSnippetStore()
 
     var address: String { didSet { UserDefaults.standard.set(address, forKey: "hermes.address") } }
     var username: String { didSet { UserDefaults.standard.set(username, forKey: "hermes.username") } }
@@ -76,14 +51,6 @@ final class HermesClient {
 
     private init() {
         let d = UserDefaults.standard
-        snippets = d.data(forKey: "hermes.snippets").flatMap { try? JSONDecoder().decode([PromptSnippet].self, from: $0) } ?? []
-        #if DEBUG
-        if let seed = ProcessInfo.processInfo.environment["HERMES_TEST_SNIPPETS"],
-           let data = seed.data(using: .utf8),
-           let seeded = try? JSONDecoder().decode([PromptSnippet].self, from: data) {
-            snippets = seeded
-        }
-        #endif
         let savedAddress = d.string(forKey: "hermes.address") ?? ""
         let savedUsername = d.string(forKey: "hermes.username") ?? ""
         address = savedAddress

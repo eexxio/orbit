@@ -2,7 +2,7 @@ import XCTest
 
 final class SlashCommandTests: XCTestCase {
     @MainActor
-    func testServerCommandsAndFiltering() {
+    func testPickerFilteringAndLocalHelp() {
         let app = launch()
         app.buttons["chats.new"].tap()
         let draft = composer(app)
@@ -10,15 +10,25 @@ final class SlashCommandTests: XCTestCase {
         draft.tap()
         draft.typeText("/")
         XCTAssertTrue(app.buttons["slash.command.help"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["slash.command.model"].exists)
-        shot("slash-menu")
-        draft.typeText("mo")
-        XCTAssertFalse(app.buttons["slash.command.help"].exists)
-        XCTAssertTrue(app.buttons["slash.command.model"].exists)
-        shot("slash-filtered")
-        app.buttons["slash.command.model"].tap()
-        XCTAssertEqual(draft.value as? String, "/model ")
-        XCTAssertFalse(app.scrollViews["slash.menu"].exists)
+        XCTAssertTrue(app.buttons["slash.command.status"].exists)
+        XCTAssertFalse(app.buttons["slash.command.status"].isEnabled)
+        shot("empty-library-picker")
+        draft.typeText("zzzz")
+        XCTAssertTrue(app.descendants(matching: .any)["slash.noMatch"].firstMatch.waitForExistence(timeout: 3))
+        shot("no-match")
+        draft.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4) + "he")
+        XCTAssertFalse(app.buttons["slash.command.status"].exists)
+        XCTAssertTrue(app.buttons["slash.command.help"].exists)
+        shot("filtered")
+        app.buttons["slash.command.help"].tap()
+        XCTAssertEqual(draft.value as? String, "/help")
+        XCTAssertTrue(app.staticTexts["slash.armed"].exists)
+        XCTAssertEqual(app.buttons["chat.send"].label, "Run command")
+        shot("command-armed")
+        app.buttons["chat.send"].tap()
+        XCTAssertTrue(app.staticTexts["slash.result.output"].waitForExistence(timeout: 5))
+        shot("result-sheet")
+        app.buttons["slash.result.done"].tap()
     }
 
     @MainActor
@@ -29,6 +39,8 @@ final class SlashCommandTests: XCTestCase {
         XCTAssertTrue(draft.waitForExistence(timeout: 10))
         draft.tap()
         draft.typeText("/unique")
+        XCTAssertEqual(draft.value as? String, "/unique")
+        XCTAssertTrue(app.buttons["slash.newSnippet"].waitForExistence(timeout: 5))
         app.buttons["slash.newSnippet"].tap()
         XCTAssertFalse(app.buttons["snippet.save"].isEnabled)
         fillEditor(app, title: "Unique prompt", body: "Summarize this conversation.")
@@ -65,11 +77,20 @@ final class SlashCommandTests: XCTestCase {
         app.buttons["snippet.save"].tap()
         let edited = app.buttons["snippets.row.Edited prompt"]
         XCTAssertTrue(edited.waitForExistence(timeout: 5))
-        shot("snippets-settings")
+        shot("snippet-library")
+        app.buttons["snippets.add"].tap()
+        fillEditor(app, title: "  Édited prompt  ", body: "Duplicate")
+        XCTAssertTrue(app.staticTexts["snippet.duplicate"].exists)
+        XCTAssertFalse(app.buttons["snippet.save"].isEnabled)
+        shot("snippet-duplicate-error")
+        app.buttons["snippet.cancel"].tap()
+        app.buttons.matching(identifier: "snippet.discard").firstMatch.tap()
+        XCTAssertTrue(app.textFields["snippet.title"].waitForNonExistence(timeout: 5))
         edited.swipeLeft()
-        let delete = app.buttons.matching(identifier: "Delete").firstMatch
+        let delete = app.buttons["snippets.delete.Edited prompt"]
         XCTAssertTrue(delete.waitForExistence(timeout: 3))
         delete.tap()
+        app.buttons.matching(identifier: "snippets.confirmDelete").firstMatch.tap()
         XCTAssertTrue(edited.waitForNonExistence(timeout: 5))
     }
 

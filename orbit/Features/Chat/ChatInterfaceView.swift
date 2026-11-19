@@ -19,6 +19,9 @@ struct ChatInterfaceView: View {
     @State private var scrollPosition = ScrollPosition()
     @State private var draft = ""
     @State private var stopCount = 0
+    @State private var attachments: [DraftAttachment] = []
+    @State private var attachmentError: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @FocusState private var composerIsFocused: Bool
 
@@ -40,6 +43,9 @@ struct ChatInterfaceView: View {
         }
         .task { await chat.loadHistory() }
         .task { await focusComposerForNewChat() }
+        #if DEBUG
+        .task { attachments = await AttachmentFixtures.load() }
+        #endif
         .onAppear { chat.isOnScreen = true }
         // Only lets the chat go if no turn is running; otherwise it finishes in the background.
         .onDisappear { chat.isOnScreen = false }
@@ -188,14 +194,14 @@ struct ChatInterfaceView: View {
             HStack {
                 Spacer(minLength: 48)
 
-                Text(message.text)
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 11)
-                    .foregroundStyle(accent.onColor)
-                    .background(
-                        accent.color,
-                        in: RoundedRectangle(cornerRadius: 20)
-                    )
+                VStack(alignment: .trailing, spacing: 6) {
+                    MessageAttachmentsView(attachments: message.attachments ?? [])
+                    if !message.text.isEmpty {
+                        Text(message.text).padding(.horizontal, 15).padding(.vertical, 11)
+                            .foregroundStyle(accent.onColor)
+                            .background(accent.color, in: RoundedRectangle(cornerRadius: 20))
+                    }
+                }
             }
         } else {
             VStack(alignment: .leading, spacing: 12) {
@@ -214,6 +220,7 @@ struct ChatInterfaceView: View {
                                 Image(systemName: "doc.on.doc")
                             }
                             .accessibilityLabel("Copy reply")
+                            .accessibilityValue(copyText)
                             .accessibilityIdentifier(isCompletedReply ? "chat.reply.completed" : "chat.reply.copy")
                         }
 
@@ -235,12 +242,28 @@ struct ChatInterfaceView: View {
     // MARK: - Composer
 
     private var composer: some View {
+        VStack(alignment: .leading, spacing: 4) {
+        if let attachmentError {
+            Label(attachmentError, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12)
+                .accessibilityIdentifier("chat.attachment.error")
+        }
+        if !attachments.isEmpty {
+            AttachmentTray(attachments: $attachments) { id in
+                NotificationCenter.default.post(name: .retryAttachment, object: id)
+            }
+            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+        }
         HStack(alignment: .bottom, spacing: 8) {
+            if HermesClient.shared.supportsAttachments != false {
+                AttachmentPicker(attachments: $attachments, error: $attachmentError) { composerIsFocused = true }
+                    .padding(.bottom, 0)
+            }
             // Grows with its text up to six lines, then scrolls.
             TextField("Ask anything", text: $draft, axis: .vertical)
                 .focused($composerIsFocused)
                 .lineLimit(1...6)
                 .padding(.vertical, 11)
+                .padding(.leading, 4)
                 .accessibilityIdentifier("chat.composer")
 
             Button {
@@ -270,26 +293,26 @@ struct ChatInterfaceView: View {
             .keyboardShortcut(chat.isGenerating ? KeyboardShortcut(".", modifiers: .command) : nil)
             .padding(.bottom, 7)
         }
-        .padding(.leading, 16)
+        }
+        .padding(.leading, 7)
         .padding(.trailing, 7)
         .frame(minHeight: 44)
         // At rest the bar narrows toward the center; focusing it spreads it full width.
         .frame(maxWidth: composerIsCollapsed ? 240 : .infinity)
         .contentShape(.rect)
-        .onTapGesture { composerIsFocused = true }
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
-        .animation(.spring(duration: 0.4, bounce: 0.2), value: composerIsCollapsed)
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.2), value: composerIsCollapsed)
     }
 
     /// Collapsed while unfocused, unless there is a draft that would get squeezed.
     private var composerIsCollapsed: Bool {
-        !composerIsFocused && draft.isEmpty
+        !composerIsFocused && draft.isEmpty && attachments.isEmpty
     }
 
     private var canSend: Bool {
-        !chat.isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !chat.isGenerating && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) && attachments.allSatisfy { $0.phase == .ready }
     }
 
     // MARK: - Send Message
@@ -303,7 +326,9 @@ struct ChatInterfaceView: View {
 
         draft = ""
         composerIsFocused = false
-        chat.send(text)
+        chat.send(text, attachments: attachments)
+        attachments = []
+        attachmentError = nil
     }
 
     @ViewBuilder
@@ -353,6 +378,7 @@ struct ChatInterfaceView: View {
                     .accessibilityIdentifier(identifier)
                 Text(detail)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("chat.reply.error")
             }
         } icon: {
             Image(systemName: "exclamationmark.circle")

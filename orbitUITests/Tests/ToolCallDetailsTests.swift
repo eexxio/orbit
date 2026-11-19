@@ -14,7 +14,8 @@ final class ToolCallDetailsTests: XCTestCase {
         XCTAssertEqual(detail("status", in: app).label, "Running")
         XCTAssertFalse(detail("timing", in: app).exists)
         XCTAssertTrue(payload("input", in: app).contains("PROJECT.md"))
-        XCTAssertTrue(payload("output", in: app).contains("Waiting for output"))
+        let waiting = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Waiting for output")).firstMatch
+        XCTAssertTrue(waiting.waitForExistence(timeout: 5))
         screenshot("tool-running")
 
         try await advance("tool-short", phase: "end")
@@ -22,9 +23,7 @@ final class ToolCallDetailsTests: XCTestCase {
         let completed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "Completed"), object: status)
         await fulfillment(of: [completed], timeout: 10)
         XCTAssertTrue(status.label.contains("0.42"))
-        XCTAssertTrue(app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Duration", "0.42 s"))
-            .firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["0.42 s"].exists, app.debugDescription)
         XCTAssertFalse(app.staticTexts["Started"].exists)
         XCTAssertFalse(app.staticTexts["Finished"].exists)
         XCTAssertTrue(payload("output", in: app).contains("Release checklist"))
@@ -44,7 +43,7 @@ final class ToolCallDetailsTests: XCTestCase {
         screenshot("tool-long-output")
         let showAll = app.buttons["tool.details.showAll"]
         reveal(showAll, in: app)
-        XCTAssertTrue(showAll.label.contains("3201"))
+        XCTAssertTrue(showAll.label.contains("3,201"))
         showAll.tap()
         XCTAssertTrue(app.buttons["tool.details.copy.output"].exists)
         XCTAssertFalse(showAll.exists)

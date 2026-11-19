@@ -29,14 +29,13 @@ final class LiveChat {
     var isGenerating: Bool { replyState.isActive }
     /// True while an existing chat's history loads and nothing is cached to show.
     private(set) var isLoadingHistory = false
+    private(set) var historyError: String?
     /// The reply text and thinking blocks still being streamed into, if any.
     private(set) var streamingID: UUID?
     private(set) var reasoningID: UUID?
     private(set) var liveToolIDs: Set<UUID> = []
-    /// Whether a chat screen shows this chat. When none does, it's let go once its turn ends.
-    var isOnScreen = false {
-        didSet { if !isOnScreen { releaseIfIdle() } }
-    }
+    @ObservationIgnored private var viewers: Set<UUID> = []
+    private var isOnScreen: Bool { !viewers.isEmpty }
 
     /// When the current reply's first word arrived, for its tokens-per-second rate.
     @ObservationIgnored private var streamStart: Date?
@@ -47,11 +46,23 @@ final class LiveChat {
 
     init(key: String?) { self.key = key }
 
+    func addViewer(_ id: UUID) {
+        viewers.insert(id)
+        if let key { HermesClient.shared.keepLive(self, as: key) }
+        Task { await loadHistory() }
+    }
+
+    func removeViewer(_ id: UUID) {
+        viewers.remove(id)
+        releaseIfIdle()
+    }
+
     func loadHistory() async {
         guard !loadedHistory else { return }
         loadedHistory = true
         guard let key else { return }
         let client = HermesClient.shared
+        historyError = nil
 
         // The cached copy shows at once; the server's copy replaces it when it arrives.
         if let cached = client.cachedMessages(for: key), !cached.isEmpty {
@@ -68,10 +79,13 @@ final class LiveChat {
             if fresh != messages.map(\.item) {
                 messages = fresh.map(ChatMessage.init)
             }
+        } catch is CancellationError {
+            loadedHistory = false
         } catch {
+            loadedHistory = false
             // Offline with a cached copy: keep showing it.
             if messages.isEmpty {
-                messages.append(ChatMessage(text: "⚠️ \(error.localizedDescription)", isUser: false))
+                historyError = error.localizedDescription
             }
         }
     }
@@ -134,7 +148,15 @@ final class LiveChat {
     func shutDown() {
         conversation?.close()
         conversation = nil
-        if isGenerating { finishTurn(as: .idle) }
+        pendingInterrupt?.cancel()
+        pendingInterrupt = nil
+        if isGenerating {
+            streamingID = nil
+            reasoningID = nil
+            liveToolIDs.removeAll()
+            streamStart = nil
+            replyState = .idle
+        }
     }
 
     private func makeConversation() -> HermesConversation {

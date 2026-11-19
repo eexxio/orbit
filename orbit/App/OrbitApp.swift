@@ -6,10 +6,18 @@ import SwiftUI
     @AppStorage(AppearanceKey.theme) private var theme = Theme.system
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        WindowGroup(id: "chats", for: ChatWindow.self) { $window in
+            ContentView(window: window)
                 .tint(accent.color)
                 .preferredColorScheme(theme.colorScheme)
         }
+        .commands { ChatCommands() }
     }
+}
+
+struct ChatWindow: Codable, Hashable {
+    var id = UUID()
+    var sessionID: String?
+    var account: String?
+    var profile: String?
 }

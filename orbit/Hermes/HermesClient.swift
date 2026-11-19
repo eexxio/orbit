@@ -39,12 +39,15 @@ final class HermesClient {
     private(set) var serverVersion: String?
     private(set) var profile = "default"
     private(set) var sessions: [HermesSession] = []
+    private(set) var didLoadSessions = false
+    @ObservationIgnored private var attemptedInitialConnection = false
     private(set) var replyingKeys: Set<String> = []
     private(set) var pendingSessionKeys: Set<String> = []
-    @ObservationIgnored private var pendingDeletes: Set<String> = []
+    private(set) var pendingDeletes: Set<String> = []
+    private(set) var deletedSessionKeys: Set<String> = []
     @ObservationIgnored private var localActivity: [String: Double] = [:]
 
-    @ObservationIgnored private(set) var cache: ConversationCache
+    private(set) var cache: ConversationCache
     @ObservationIgnored private var prefetchTask: Task<Void, Never>?
     @ObservationIgnored private var session = URLSession(configuration: .ephemeral)
     @ObservationIgnored private var pageToken: String?
@@ -53,6 +56,14 @@ final class HermesClient {
     /// Chats with a turn running or a screen showing them, by session key, so leaving a chat
     /// mid-reply doesn't drop it. Not observed: views watch the `LiveChat` itself.
     @ObservationIgnored private var liveChats: [String: LiveChat] = [:]
+    @ObservationIgnored private var retainedRoutes: [String: ChatReference] = [:]
+    @ObservationIgnored private var unsavedChats: [ChatReference] = []
+    @ObservationIgnored private var scopeRevision = UUID()
+
+    private final class ChatReference {
+        weak var chat: LiveChat?
+        init(_ chat: LiveChat) { self.chat = chat }
+    }
 
     private init() {
         let d = UserDefaults.standard
@@ -82,9 +93,21 @@ final class HermesClient {
 
     // MARK: Connection lifecycle
 
+    func connectWorkspaceIfNeeded() async {
+        guard !attemptedInitialConnection, isConfigured, state == .disconnected else { return }
+        attemptedInitialConnection = true
+        await Task { await connect() }.value
+    }
+
     /// Drops any sign-in and connects again with the current settings.
     func connect() async {
-        shutDownLiveChats()
+        state = .connecting
+        let scopeChanged = cache.accountScope != ConversationCache.scope(address: address, username: username)
+        if scopeChanged {
+            deletedSessionKeys = []
+            didLoadSessions = false
+            shutDownLiveChats()
+        }
         signOutLocally()
         cache = ConversationCache(address: address, username: username)
         sessions = cache.sessions
@@ -97,6 +120,8 @@ final class HermesClient {
     }
 
     func disconnect() {
+        deletedSessionKeys = []
+        didLoadSessions = false
         shutDownLiveChats()
         signOutLocally()
         cache.clear()
@@ -150,7 +175,11 @@ final class HermesClient {
                 }
             }
             signedIn = true
-            if let active = try? await getJSON("api/profiles/active"), let current = active["current"].text, !current.isEmpty {
+            let active = try? await getJSON("api/profiles/active")
+            if let current = active?["current"].text, !current.isEmpty, profile != current {
+                shutDownLiveChats()
+                deletedSessionKeys = []
+                didLoadSessions = false
                 profile = current
             }
             state = .connected
@@ -190,6 +219,7 @@ final class HermesClient {
 
     private func mutateSession(_ chat: HermesSession, fields: [String: JSON]?) async throws {
         guard !pendingSessionKeys.contains(chat.id) else { return }
+        let revision = scopeRevision
         let original = sessions.first { $0.id == chat.id } ?? chat
         pendingSessionKeys.insert(chat.id)
         if let fields, let index = sessions.firstIndex(where: { $0.id == chat.id }) {
@@ -201,15 +231,19 @@ final class HermesClient {
         }
         cache.store(sessions: sessions)
         defer {
-            pendingSessionKeys.remove(chat.id)
-            pendingDeletes.remove(chat.id)
+            if revision == scopeRevision {
+                pendingSessionKeys.remove(chat.id)
+                pendingDeletes.remove(chat.id)
+            }
         }
         do {
             try await ensureSignedIn()
+            guard revision == scopeRevision else { return }
             guard let base = baseURL else { throw HermesError.notConfigured }
             let path = "api/sessions/\(chat.id)"
             var snapshotRequest = request(base, path + "/mutation-snapshot", query: ["profile": profile])
             let (snapshotData, snapshotResponse) = try await authorizedRaw(&snapshotRequest)
+            guard revision == scopeRevision else { return }
             var identity: [String: JSON] = ["profile": .string(profile)]
             if ![404, 405].contains(snapshotResponse.statusCode) {
                 guard (200..<300).contains(snapshotResponse.statusCode) else {
@@ -234,6 +268,7 @@ final class HermesClient {
             var req = request(base, path, method: fields == nil ? "DELETE" : "PATCH",
                               body: fields == nil ? nil : .object(body), query: query)
             let (data, response) = try await authorizedRaw(&req)
+            guard revision == scopeRevision else { return }
             let json = JSON.decode(data) ?? .null
             let absent = fields == nil && response.statusCode == 404 &&
                 (json["already_absent"].flag == true || json["detail"].text == "already_absent")
@@ -244,12 +279,10 @@ final class HermesClient {
                 }
             }
             if fields == nil {
-                liveChats[chat.id]?.shutDown()
-                liveChats[chat.id] = nil
-                replyingKeys.remove(chat.id)
-                cache.removeSession(chat.id)
+                invalidateChat(chat.id)
             }
         } catch {
+            guard revision == scopeRevision else { return }
             sessions.removeAll { $0.id == chat.id }
             sessions.append(original)
             cache.store(sessions: sessions)
@@ -259,20 +292,47 @@ final class HermesClient {
 
     /// The chat already running for this key, or a fresh one that loads its history.
     func liveChat(for key: String?) -> LiveChat {
-        if let key, let live = liveChats[key] { return live }
-        return LiveChat(key: key)
+        guard let key else {
+            unsavedChats.removeAll { $0.chat == nil || $0.chat?.key != nil }
+            let chat = LiveChat(key: nil)
+            unsavedChats.append(ChatReference(chat))
+            return chat
+        }
+        if let chat = retainedRoutes[key]?.chat { return chat }
+        retainedRoutes = retainedRoutes.filter { $0.value.chat != nil }
+        let chat = LiveChat(key: key)
+        retainedRoutes[key] = ChatReference(chat)
+        return chat
     }
 
-    func keepLive(_ chat: LiveChat, as key: String) { liveChats[key] = chat }
+    func keepLive(_ chat: LiveChat, as key: String) {
+        retainedRoutes[key] = ChatReference(chat)
+        liveChats[key] = chat
+    }
+
+    func invalidateChat(_ key: String) {
+        deletedSessionKeys.insert(key)
+        retainedRoutes[key]?.chat?.shutDown()
+        retainedRoutes[key] = nil
+        liveChats[key] = nil
+        sessions.removeAll { $0.id == key }
+        replyingKeys.remove(key)
+        cache.removeSession(key)
+    }
 
     func releaseLive(_ chat: LiveChat, key: String) {
         if liveChats[key] === chat { liveChats[key] = nil }
     }
 
     private func shutDownLiveChats() {
+        scopeRevision = UUID()
+        pendingSessionKeys = []
+        pendingDeletes = []
         replyingKeys = []
         localActivity = [:]
-        let chats = liveChats.values
+        let chats = retainedRoutes.values.compactMap(\.chat) + unsavedChats.compactMap(\.chat)
+        retainedRoutes = [:]
+        unsavedChats = []
         liveChats = [:]
         chats.forEach { $0.shutDown() }
     }
@@ -282,10 +342,12 @@ final class HermesClient {
     func refreshSessions() async {
         do {
             try await ensureSignedIn()
+            let revision = scopeRevision
             let json = try await getJSON("api/sessions", query: [
                 "profile": profile, "order": "recent", "archived": "exclude", "limit": "100", "offset": "0",
                 "min_messages": "1", "exclude_sources": "cron,kanban,oneshot,subagent,tool"
             ])
+            guard revision == scopeRevision else { return }
             let local = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
             var fresh: [HermesSession] = (json["sessions"].list ?? []).compactMap { row in
                 // A row can be wrapped (`{session: {...}}`) on some releases.
@@ -294,7 +356,7 @@ final class HermesClient {
                 let title = r["title"].text.flatMap { $0.isEmpty ? nil : $0 }
                     ?? r["preview"].text.flatMap { $0.isEmpty ? nil : String($0.prefix(60)) }
                     ?? "New chat"
-                guard !pendingDeletes.contains(id) else { return nil }
+                guard !pendingDeletes.contains(id), !deletedSessionKeys.contains(id) else { return nil }
                 if pendingSessionKeys.contains(id), let chat = local[id] { return chat }
                 let activity = max(r["last_active"].double ?? 0, localActivity[id] ?? 0)
                 return HermesSession(id: id, title: title, lastActive: activity == 0 ? nil : activity,
@@ -305,6 +367,7 @@ final class HermesClient {
             }
             sessions = fresh
             cache.store(sessions: sessions)
+            didLoadSessions = true
             prefetchRecent()
         } catch {
             state = .failed(error.localizedDescription)
@@ -312,10 +375,19 @@ final class HermesClient {
     }
 
     func messages(for key: String) async throws -> [HermesMessage] {
+        let revision = scopeRevision
         try await ensureSignedIn()
-        let json = try await getJSON("api/sessions/\(key)/messages", query: [
-            "profile": profile, "order": "latest", "limit": "100", "offset": "0", "include_compacted": "true"
-        ])
+        guard revision == scopeRevision else { throw CancellationError() }
+        let json: JSON
+        do {
+            json = try await getJSON("api/sessions/\(key)/messages", query: [
+                "profile": profile, "order": "latest", "limit": "100", "offset": "0", "include_compacted": "true"
+            ])
+        } catch HermesError.http(404, let detail) where detail == "Session not found" && revision == scopeRevision {
+            invalidateChat(key)
+            throw CancellationError()
+        }
+        guard revision == scopeRevision, !deletedSessionKeys.contains(key) else { throw CancellationError() }
         var rows = json["messages"].list ?? []
         // `order=latest` pages newest first; show oldest first.
         if let first = rows.first?["id"].double, let last = rows.last?["id"].double, first > last { rows.reverse() }

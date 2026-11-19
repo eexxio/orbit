@@ -19,6 +19,7 @@ struct ChatInterfaceView: View {
     @State private var scrollPosition = ScrollPosition()
     @State private var draft = ""
     @State private var stopCount = 0
+    @State private var editingSnippet: PromptSnippet?
 
     @FocusState private var composerIsFocused: Bool
 
@@ -35,10 +36,22 @@ struct ChatInterfaceView: View {
             }
             .background(Color(uiColor: .systemBackground))
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                composer
+                VStack(spacing: 0) {
+                    if draft.hasPrefix("/"), !draft.contains(where: { $0.isWhitespace }) {
+                        SlashCommandMenu(query: String(draft.dropFirst()), commands: chat.commands) { text in
+                            draft = text
+                            composerIsFocused = true
+                        } newSnippet: {
+                            editingSnippet = PromptSnippet(title: "", body: "")
+                        }
+                    }
+                    composer
+                }
             }
         }
         .task { await chat.loadHistory() }
+        .task { await chat.loadCommands() }
+        .sheet(item: $editingSnippet, onDismiss: { composerIsFocused = true }) { SnippetEditor(snippet: $0) }
         .task { await focusComposerForNewChat() }
         .onAppear { chat.isOnScreen = true }
         // Only lets the chat go if no turn is running; otherwise it finishes in the background.
@@ -189,6 +202,7 @@ struct ChatInterfaceView: View {
                 Spacer(minLength: 48)
 
                 Text(message.text)
+                    .accessibilityIdentifier("chat.user.\(message.text)")
                     .padding(.horizontal, 15)
                     .padding(.vertical, 11)
                     .foregroundStyle(accent.onColor)

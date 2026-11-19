@@ -102,6 +102,9 @@ class HermesStub(BaseHTTPRequestHandler):
                     self.result(request, {"session_id": "runtime", "stored_session_id": "fixture"})
                 elif method == "gateway.ping":
                     self.result(request, {})
+                elif method == "commands.catalog":
+                    self.result(request, [{"name": "help", "description": "Show server help"},
+                                          {"name": "/model", "description": "Choose a model"}])
                 elif method == "prompt.submit":
                     self.scenario = SCENARIOS.get(request["params"]["text"])
                     with STATS_LOCK:
@@ -139,6 +142,9 @@ class HermesStub(BaseHTTPRequestHandler):
     def stream_reply(self, fixture_id, text):
         if text == "Send after reconnecting":
             self.event("message.complete", {"text": "The next reply arrived."})
+            return True
+        if text not in SCENARIOS:
+            self.event("message.complete", {"text": "Snippet received."})
             return True
         scenario = SCENARIOS[text]
         self.scenario = scenario

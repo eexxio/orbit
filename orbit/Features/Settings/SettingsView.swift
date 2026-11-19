@@ -135,6 +135,10 @@ struct SettingsView: View {
                     Text("Show tool calls")
                 }
             }
+            NavigationLink { PromptSnippetsView() } label: {
+                Label("Prompt snippets", systemImage: "text.quote")
+            }
+            .accessibilityIdentifier("settings.snippets")
         } header: {
             Text("Chat")
         } footer: {

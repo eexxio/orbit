@@ -12,6 +12,7 @@ final class HermesConversation {
     private var heartbeat: Task<Void, Never>?
     private var connectionID = UUID()
     private var nextID = 0
+    private var openingTask: Task<Void, Error>?
     private var pending: [Int: CheckedContinuation<JSON, Error>] = [:]
 
     var onDelta: ((String) -> Void)?
@@ -42,7 +43,7 @@ final class HermesConversation {
 
     /// Sends one prompt, opening the socket and session first when needed.
     func send(_ text: String) async throws {
-        if socket == nil || runtimeID == nil { try await open() }
+        try await ensureOpen()
         guard let runtimeID else { throw HermesError.unsupported }
         acceptsReplyEvents = true
         _ = try await call("prompt.submit", ["session_id": .string(runtimeID), "text": .string(text), "queued": .bool(true)])
@@ -57,6 +58,26 @@ final class HermesConversation {
         } catch {
             return false
         }
+    }
+
+    func commands() async -> [HermesCommand] {
+        do {
+            try await ensureOpen()
+            let reply = try await call("commands.catalog", [:], timeout: .seconds(5))
+            let commands = HermesCommand.parse(reply)
+            return commands.isEmpty ? HermesCommand.fallback : commands
+        } catch {
+            return HermesCommand.fallback
+        }
+    }
+
+    private func ensureOpen() async throws {
+        if let openingTask { return try await openingTask.value }
+        guard socket == nil || runtimeID == nil else { return }
+        let task = Task { try await open() }
+        openingTask = task
+        defer { openingTask = nil }
+        try await task.value
     }
 
     private func open() async throws {

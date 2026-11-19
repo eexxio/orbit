@@ -17,6 +17,15 @@ final class LiveChat {
 
     /// The stored session key; nil for a new chat until the host assigns one.
     private(set) var key: String?
+    private(set) var commands = HermesCommand.fallback
+    @ObservationIgnored private var loadedCommands = false
+
+    func loadCommands() async {
+        guard !loadedCommands else { return }
+        loadedCommands = true
+        let chat = conversation ?? makeConversation()
+        commands = await chat.commands()
+    }
     var messages: [ChatMessage] = []
     private(set) var replyState: ReplyState = .idle
     var isGenerating: Bool { replyState.isActive }

@@ -61,7 +61,11 @@ final class ChatStreamingTests: XCTestCase {
         screenshot("codeblock-copied")
         swiftCopy.tap()
         XCTAssertEqual(swiftCopy.value as? String, "Copied")
-        XCTAssertTrue(copies.matching(NSPredicate(format: "label == %@", "Copy code")).firstMatch.exists)
+        let unlabeledCopy = copies.matching(NSPredicate(format: "label == %@", "Copy code")).firstMatch
+        XCTAssertTrue(unlabeledCopy.exists)
+        let unlabeledBody = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", " code block")).firstMatch
+        XCTAssertEqual(unlabeledCopy.frame.minY, unlabeledBody.frame.minY, accuracy: 5)
         XCTAssertEqual(app.staticTexts.matching(identifier: "chat.codeblock.language").count, 2)
         let reset = NSPredicate(format: "value != %@", "Copied")
         await fulfillment(of: [expectation(for: reset, evaluatedWith: swiftCopy)], timeout: 4)
@@ -78,11 +82,36 @@ final class ChatStreamingTests: XCTestCase {
     }
 
     @MainActor
+    func testTableHeaderStreamsAsTable() async throws {
+        let app = launchChat()
+        send("Stream a table", in: app)
+        let table = app.scrollViews["chat.table"].firstMatch
+        XCTAssertTrue(table.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["First column"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "|")).firstMatch.exists)
+        screenshot("table-streaming-header")
+        try await advance("table", to: "end")
+        XCTAssertTrue(app.buttons["chat.reply.completed"].waitForExistence(timeout: 10))
+        XCTAssertTrue(table.exists)
+        screenshot("table-streaming-completed")
+        app.terminate()
+        let darkApp = launchChat(theme: "dark")
+        send("Stream a table", in: darkApp)
+        XCTAssertTrue(darkApp.scrollViews["chat.table"].firstMatch.waitForExistence(timeout: 10))
+        screenshot("table-streaming-header-dark")
+        try await advance("table", to: "end")
+    }
+
+    @MainActor
     func testCodeBlocksInDarkMode() {
         let app = launchChat(theme: "dark")
         send("Show code blocks", in: app)
         XCTAssertTrue(app.buttons["chat.codeblock.copy"].firstMatch.waitForExistence(timeout: 10))
         screenshot("codeblock-dark")
+        let table = app.scrollViews.containing(.staticText, identifier: "First column").allElementsBoundByIndex.last
+        XCTAssertNotNil(table)
+        table?.swipeLeft()
+        screenshot("codeblock-dark-table-scrolled")
     }
 
     @MainActor
@@ -106,6 +135,10 @@ final class ChatStreamingTests: XCTestCase {
         try await advance("code-interrupted", to: "end")
         XCTAssertTrue(app.staticTexts["chat.reply.interrupted"].waitForExistence(timeout: 10))
         XCTAssertTrue(copy.isEnabled)
+        copy.tap()
+        XCTAssertEqual(copy.value as? String, "Copied")
+        let reset = NSPredicate(format: "value != %@", "Copied")
+        await fulfillment(of: [expectation(for: reset, evaluatedWith: copy)], timeout: 3)
         screenshot("codeblock-interrupted")
     }
 

@@ -16,6 +16,7 @@ STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
 PARTIAL = "Here is the first part"
 SCENARIOS = {
     "Show code blocks": "code",
+    "Stream a table": "table",
     "Show empty code": "code-empty",
     "Interrupt code": "code-interrupted",
     "Complete the reply": "complete",
@@ -140,6 +141,14 @@ class HermesStub(BaseHTTPRequestHandler):
             pass
 
     def stream_reply(self, fixture_id, text):
+        if text == "Stream a table":
+            header = "| First column | Second column | Third column | Fourth column |"
+            self.event("message.delta", {"text": header})
+            if self.wait(fixture_id, "table", "end", self.stopped):
+                ending = "\n| --- | --- | --- | --- |\n| Wide first value | Second value | Third value | Last value |"
+                self.event("message.delta", {"text": ending})
+                self.event("message.complete", {"text": header + ending})
+            return True
         if text == "Show empty code":
             self.event("message.complete", {"text": "```\n```"})
             return True

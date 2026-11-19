@@ -23,37 +23,25 @@ struct CodeBlockView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                if let language {
+            if let language {
+                HStack(spacing: 0) {
                     Text(language)
                         .font(.caption.monospaced())
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .accessibilityHidden(true)
                         .accessibilityIdentifier("chat.codeblock.language")
-                }
-                Spacer(minLength: 0)
-                if !code.isEmpty {
-                    Button(action: copy) {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .contentTransition(.symbolEffect(.replace))
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Rectangle())
+                    Spacer(minLength: 0)
+                    if !code.isEmpty {
+                        copyButton.padding(.vertical, -6)
                     }
-                    .buttonStyle(.plain)
-                    .font(.subheadline)
-                    .accessibilityLabel(language.map { "Copy \($0) code" } ?? "Copy code")
-                    .accessibilityValue(copied ? "Copied" : "")
-                    .accessibilityIdentifier("chat.codeblock.copy")
-                    .sensoryFeedback(.success, trigger: copyCount)
-                    .padding(.vertical, -6)
                 }
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .frame(minHeight: 32)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 32)
 
-            Divider()
+                Divider()
+            }
 
             ScrollView(.horizontal, showsIndicators: true) {
                 configuration.label
@@ -71,6 +59,12 @@ struct CodeBlockView: View {
                     .accessibilityLabel("\(language ?? "") code block")
                     .accessibilityValue(code)
             }
+            .padding(.trailing, language == nil && !code.isEmpty ? 44 : 0)
+        }
+        .overlay(alignment: .topTrailing) {
+            if language == nil && !code.isEmpty {
+                copyButton
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemBackground))
@@ -84,6 +78,22 @@ struct CodeBlockView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.codeblock")
         .onDisappear { resetTask?.cancel() }
+    }
+
+    private var copyButton: some View {
+        Button(action: copy) {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .contentTransition(.symbolEffect(.replace))
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel(language.map { "Copy \($0) code" } ?? "Copy code")
+        .accessibilityValue(copied ? "Copied" : "")
+        .accessibilityIdentifier("chat.codeblock.copy")
+        .sensoryFeedback(.success, trigger: copyCount)
     }
 
     private func copy() {

@@ -10,6 +10,8 @@ All notable changes to this project are documented here. The format follows
 - New chat opens a blank conversation after a completed, interrupted, or failed reply instead of reopening the previous transcript.
 
 ### Added
+- Unlabeled code uses a floating copy control, and Markdown tables have rounded borders and shaded headers.
+- Streaming table headers render immediately as horizontally scrolling tables instead of raw pipe text.
 - Stop a generating reply from the composer, keeping partial text and your next draft with a quiet Stopped status.
 - Code blocks show language labels and copy buttons; long code lines and wide tables scroll horizontally.
 - Connect to a Hermes Agent dashboard: open, username/password, and Cloudflare Access sign-in.

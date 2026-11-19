@@ -38,6 +38,7 @@ struct AttachmentPicker: View {
 
     private var pickerMenu: some View {
         Menu {
+            Group {
             Button("Photo Library", systemImage: "photo.on.rectangle") { showsPhotos = true }
                 .accessibilityIdentifier("chat.attach.library")
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
@@ -53,6 +54,8 @@ struct AttachmentPicker: View {
                     }
                 }.accessibilityIdentifier("chat.attach.paste")
             }
+            }.disabled(attachments.count >= 10)
+            if attachments.count >= 10 { Text("10 attachments is the limit") }
         } label: {
             Image(systemName: "plus.circle.fill").resizable().scaledToFit().frame(width: 30, height: 30)
                 .frame(width: 44, height: 44).contentShape(.rect)
@@ -65,39 +68,39 @@ struct AttachmentPicker: View {
     }
 
     private func loadPhotos() {
-            let selected = photos
-            photos = []
-            for photo in selected {
-                guard let id = placeholder(name: "Photo", image: true) else { break }
-                let load = {
+        let selected = photos
+        photos = []
+        for photo in selected {
+            guard let id = placeholder(name: "Photo", image: true) else { break }
+            let load = {
                 Task { @MainActor in
                     do {
                         guard let data = try await photo.loadTransferable(type: Data.self) else { throw HermesError.server("Couldn't load this photo") }
                         await prepare(id: id, data: data, name: "Photo.jpg", image: true)
                     } catch { fail(id, "Couldn't load this photo") }
                 }
+            }
+            retryActions[id] = { _ = load() }
+            _ = load()
+        }
+        focus()
+    }
+
+    private func loadFiles(_ result: Result<[URL], Error>) {
+        do {
+            for url in try result.get() {
+                guard let id = placeholder(name: url.lastPathComponent, image: false) else { break }
+                let load = {
+                    Task { @MainActor in
+                        do { complete(id, try await Task.detached { try AttachmentPreparation.file(url) }.value) }
+                        catch { fail(id, error.localizedDescription) }
+                    }
                 }
                 retryActions[id] = { _ = load() }
                 _ = load()
             }
             focus()
-    }
-
-    private func loadFiles(_ result: Result<[URL], Error>) {
-            do {
-                for url in try result.get() {
-                    guard let id = placeholder(name: url.lastPathComponent, image: false) else { break }
-                    let load = {
-                    Task { @MainActor in
-                        do { complete(id, try await Task.detached { try AttachmentPreparation.file(url) }.value) }
-                        catch { fail(id, error.localizedDescription) }
-                    }
-                    }
-                    retryActions[id] = { _ = load() }
-                    _ = load()
-                }
-                focus()
-            } catch { self.error = error.localizedDescription }
+        } catch { self.error = error.localizedDescription }
     }
 
     private func placeholder(name: String, image: Bool) -> UUID? {

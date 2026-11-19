@@ -25,6 +25,18 @@ final class AttachmentTests: XCTestCase {
     }
 
     @MainActor
+    func testAttachImageAndFile() {
+        let app = launchChat(multiple: true)
+        let items = app.descendants(matching: .any).matching(identifier: "chat.tray.item")
+        XCTAssertTrue(items.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(items.count, 2)
+        app.buttons["chat.send"].tap()
+        XCTAssertTrue(element("chat.reply.completed", in: app).waitForExistence(timeout: 10))
+        XCTAssertEqual(element("chat.reply.completed", in: app).value as? String, "Got 2 attachment(s)")
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "chat.message.attachment").count, 2)
+    }
+
+    @MainActor
     func testUnsupportedServerHidesAttach() {
         let app = launchChat(unsupported: true)
         XCTAssertTrue(element("chat.tray.item", in: app).waitForExistence(timeout: 10))
@@ -36,11 +48,11 @@ final class AttachmentTests: XCTestCase {
     }
 
     @MainActor
-    private func launchChat(unsupported: Bool = false) -> XCUIApplication {
+    private func launchChat(unsupported: Bool = false, multiple: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         let fixture = (unsupported ? "unsupported-" : "") + UUID().uuidString
-        app.launchArguments = ["-hermes.address", "http://127.0.0.1:18765/\(fixture)", "-attachment-fixture", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchArguments = ["-hermes.address", "http://127.0.0.1:18765/\(fixture)", multiple ? "-attachment-fixtures" : "-attachment-fixture", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
         XCTAssertTrue(app.buttons["chats.new"].waitForExistence(timeout: 10))
         app.buttons["chats.new"].tap()

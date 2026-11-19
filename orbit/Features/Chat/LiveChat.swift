@@ -37,6 +37,7 @@ final class LiveChat {
     @ObservationIgnored private var conversation: HermesConversation?
     @ObservationIgnored private var latestPromptID: UUID?
     @ObservationIgnored private var pendingInterrupt: Task<Void, Never>?
+    @ObservationIgnored private var outgoingAttachments: [OutgoingAttachment] = []
 
     init(key: String?) { self.key = key }
 
@@ -74,16 +75,18 @@ final class LiveChat {
         var prompt = ChatMessage(text: text, isUser: true)
         prompt.item.attachments = attachments.isEmpty ? nil : attachments.map(\.descriptor)
         messages.append(prompt)
+        outgoingAttachments = attachments.compactMap(\.outgoing)
         latestPromptID = prompt.id
         replyState = .waiting
         // Held while the turn runs, even if the screen goes away.
         if let key { HermesClient.shared.keepLive(self, as: key) }
+        let outgoing = outgoingAttachments
         Task {
             await pendingInterrupt?.value
             guard isGenerating, latestPromptID == prompt.id else { return }
             let chat = conversation ?? makeConversation()
             do {
-                try await chat.send(text, attachments: attachments.compactMap(\.outgoing))
+                try await chat.send(text, attachments: outgoing)
                 guard conversation === chat else { return }
                 adoptKey(chat.storedKey)
             } catch {
@@ -222,6 +225,7 @@ final class LiveChat {
         liveToolIDs.removeAll()
         streamStart = nil
         replyState = state
+        if state == .completed || state == .idle { outgoingAttachments = [] }
         adoptKey(conversation?.storedKey)
         switch state {
         case .failed, .interrupted:

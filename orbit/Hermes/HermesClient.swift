@@ -12,7 +12,7 @@ import Observation
 //   • PUT  /api/profiles/{name}/soul   – `{content}` replaces SOUL.md
 //   • POST /api/auth/ws-ticket         – single-use ticket for the gateway socket
 //   • WS   /api/ws                     – JSON-RPC 2.0 gateway: session.create / session.resume /
-//                                        commands.catalog, prompt.submit / session.interrupt, streaming `message.delta` / `message.interim` /
+//                                        commands.catalog / slash.exec, prompt.submit / session.interrupt, streaming `message.delta` / `message.interim` /
 //                                        `message.complete`, `reasoning.delta` / `reasoning.available`,
 //                                        and `tool.start` / `tool.complete` events.
 
@@ -27,7 +27,7 @@ final class HermesClient {
     // Saved configuration
     let snippetStore = PromptSnippetStore()
 
-    var address: String { didSet { UserDefaults.standard.set(address, forKey: "hermes.address") } }
+    var address: String { didSet { invalidateCommandCatalog(); UserDefaults.standard.set(address, forKey: "hermes.address") } }
     var username: String { didSet { UserDefaults.standard.set(username, forKey: "hermes.username") } }
     var password: String { didSet { Keychain.write(password, "password") } }
     /// Optional Cloudflare Access service token, for dashboards behind Cloudflare Tunnel.
@@ -36,7 +36,10 @@ final class HermesClient {
 
     private(set) var state: State = .disconnected
     private(set) var serverVersion: String?
-    private(set) var profile = "default"
+    private(set) var profile = "default" { didSet { if oldValue != profile { invalidateCommandCatalog() } } }
+    @ObservationIgnored private var commandCatalog: (key: String, value: HermesCommandCatalog)?
+    @ObservationIgnored private var catalogSocket: HermesConversation?
+    @ObservationIgnored private var catalogSocketScope: String?
     private(set) var sessions: [HermesSession] = []
 
     @ObservationIgnored private(set) var cache: ConversationCache
@@ -61,6 +64,41 @@ final class HermesClient {
         cache = ConversationCache(address: savedAddress, username: savedUsername)
         // The cached list shows at once; the server's replaces it once signed in.
         sessions = cache.sessions
+    }
+
+    func takeCatalogSocket(for key: String?) -> HermesConversation? {
+        guard catalogSocketScope == address + "\n" + profile, let gateway = catalogSocket else { return nil }
+        catalogSocket = nil
+        gateway.attach(storedKey: key)
+        return gateway
+    }
+
+    func invalidateCommandCatalog() { commandCatalog = nil }
+
+    func commands(using conversation: HermesConversation?) async -> HermesCommandCatalog {
+        guard state == .connected else { return .fallback }
+        let key = address + "\n" + profile
+        if let cached = commandCatalog, cached.key == key { return cached.value }
+        let gateway: HermesConversation
+        if let conversation { gateway = conversation }
+        else {
+            if catalogSocketScope != key {
+                catalogSocket?.close()
+                catalogSocket = nil
+                catalogSocketScope = key
+            }
+            if catalogSocket == nil { catalogSocket = HermesConversation(storedKey: nil) }
+            gateway = catalogSocket!
+        }
+        let catalog: HermesCommandCatalog
+        if let reply = try? await gateway.commands(), let commands = HermesCommand.parse(reply) {
+            catalog = HermesCommandCatalog(commands: commands, isFallback: false)
+        } else {
+            catalog = .fallback
+        }
+        guard state == .connected, key == address + "\n" + profile else { return .fallback }
+        commandCatalog = (key, catalog)
+        return catalog
     }
 
     var isConfigured: Bool { baseURL != nil }
@@ -104,6 +142,9 @@ final class HermesClient {
         prefetchTask = nil
         signInTask?.cancel()
         signInTask = nil
+        catalogSocket?.close()
+        catalogSocket = nil
+        invalidateCommandCatalog()
         signedIn = false
         pageToken = nil
         session.invalidateAndCancel()

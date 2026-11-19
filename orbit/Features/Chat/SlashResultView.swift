@@ -5,6 +5,20 @@ struct SlashResult: Identifiable {
     let title: String
     let output: String
     var warning: String? = nil
+
+    nonisolated static func plain(_ text: String) -> String {
+        let stripped = text.replacingOccurrences(of: "\u{001B}\\[[0-?]*[ -/]*[@-~]|\u{001B}\\][^\u{0007}\u{001B}]*(?:\u{0007}|\u{001B}\\\\)", with: "", options: .regularExpression)
+        return String(stripped.unicodeScalars.filter {
+            !CharacterSet.controlCharacters.contains($0) || $0 == "\n" || $0 == "\t"
+        })
+    }
+
+    init(title: String, output: String, warning: String? = nil) {
+        self.title = title
+        let plain = Self.plain(output).trimmingCharacters(in: .whitespacesAndNewlines)
+        self.output = plain.isEmpty || plain == "(no output)" ? "No information returned" : plain
+        self.warning = warning.map(Self.plain)
+    }
 }
 
 struct SlashResultView: View {

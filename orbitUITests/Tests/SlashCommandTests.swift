@@ -1,8 +1,9 @@
 import XCTest
 
 final class SlashCommandTests: XCTestCase {
+    private var fixtureID = UUID().uuidString
     @MainActor
-    func testPickerFilteringAndLocalHelp() {
+    func testPickerFilteringAndLocalHelp() async throws {
         let app = launch()
         app.buttons["chats.new"].tap()
         let draft = composer(app)
@@ -11,8 +12,20 @@ final class SlashCommandTests: XCTestCase {
         draft.typeText("/")
         XCTAssertTrue(app.buttons["slash.command.help"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["slash.command.status"].exists)
-        XCTAssertFalse(app.buttons["slash.command.status"].isEnabled)
-        shot("empty-library-picker")
+        XCTAssertTrue(app.staticTexts["slash.commands"].isHittable)
+        XCTAssertTrue(app.buttons["slash.command.help"].isHittable)
+        XCTAssertTrue(app.buttons["slash.command.help"].isEnabled)
+        for name in ["status", "context", "usage"] {
+            let row = app.buttons["slash.command.\(name)"]
+            XCTAssertTrue(row.exists)
+            XCTAssertFalse(row.isEnabled)
+            XCTAssertTrue(row.label.contains("Send a message first"))
+        }
+        shot("empty-picker")
+        let initial = try await state()
+        XCTAssertEqual(initial["creates"], 0)
+        XCTAssertEqual(initial["resumes"], 0)
+        XCTAssertEqual(initial["prompts"], 0)
         draft.typeText("zzzz")
         XCTAssertTrue(app.descendants(matching: .any)["slash.noMatch"].firstMatch.waitForExistence(timeout: 3))
         shot("no-match")
@@ -24,15 +37,15 @@ final class SlashCommandTests: XCTestCase {
         XCTAssertEqual(draft.value as? String, "/help")
         XCTAssertTrue(app.staticTexts["slash.armed"].exists)
         XCTAssertEqual(app.buttons["chat.send"].label, "Run command")
-        shot("command-armed")
+        shot("help-armed")
         app.buttons["chat.send"].tap()
         XCTAssertTrue(app.staticTexts["slash.result.output"].waitForExistence(timeout: 5))
-        shot("result-sheet")
+        shot("help-result")
         app.buttons["slash.result.done"].tap()
     }
 
     @MainActor
-    func testCreateInsertAndSendSnippet() {
+    func testCreateInsertAndSendSnippet() async throws {
         let app = launch()
         app.buttons["chats.new"].tap()
         let draft = composer(app)
@@ -56,6 +69,9 @@ final class SlashCommandTests: XCTestCase {
             app.buttons["chat.send"].tap()
         }
         XCTAssertTrue(bubble.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts.matching(identifier: "chat.user.Summarize this conversation.").count, 1)
+        let counts = try await state()
+        XCTAssertEqual(counts["prompts"], 1)
     }
 
     @MainActor
@@ -82,7 +98,7 @@ final class SlashCommandTests: XCTestCase {
         fillEditor(app, title: "  Édited prompt  ", body: "Duplicate")
         XCTAssertTrue(app.staticTexts["snippet.duplicate"].exists)
         XCTAssertFalse(app.buttons["snippet.save"].isEnabled)
-        shot("snippet-duplicate-error")
+        shot("snippet-editor-duplicate")
         app.buttons["snippet.cancel"].tap()
         app.buttons.matching(identifier: "snippet.discard").firstMatch.tap()
         XCTAssertTrue(app.textFields["snippet.title"].waitForNonExistence(timeout: 5))
@@ -95,11 +111,113 @@ final class SlashCommandTests: XCTestCase {
     }
 
     @MainActor
-    private func launch() -> XCUIApplication {
+    func testRemoteStatusAndEmptyResultsWithoutSubmitting() async throws {
+        let app = launch(scenario: "supported", seeded: true)
+        let existing = app.buttons["chats.session.fixture"]
+        XCTAssertTrue(existing.waitForExistence(timeout: 10))
+        existing.tap()
+        let draft = composer(app)
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        draft.tap()
+        draft.typeText("/")
+        XCTAssertTrue(app.buttons["slash.snippet.Summarize"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["slash.commands"].exists)
+        XCTAssertFalse(app.buttons["slash.command.model"].exists)
+        shot("picker-with-snippets")
+        let before = try await state()
+        XCTAssertEqual(before["prompts"], 0)
+        XCTAssertEqual(before["creates"], 0)
+        XCTAssertEqual(before["catalogs"], 1)
+        draft.typeText("sta")
+        let status = app.buttons["slash.command.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.isEnabled)
+        status.tap()
+        XCTAssertEqual(draft.value as? String, "/status")
+        XCTAssertEqual(app.buttons["chat.send"].label, "Run command")
+        shot("command-armed")
+        app.buttons["chat.send"].tap()
+        let output = app.staticTexts["slash.result.output"]
+        XCTAssertTrue(output.waitForExistence(timeout: 10))
+        XCTAssertEqual(output.label, "Status: ready")
+        shot("result-sheet")
+        app.buttons["slash.result.done"].tap()
+        for token in ["ctx", "usage"] {
+            draft.tap()
+            draft.typeText("/" + token)
+            let canonical = token == "ctx" ? "context" : token
+            app.buttons["slash.command.\(canonical)"].tap()
+            XCTAssertEqual(draft.value as? String, "/\(canonical)")
+            app.buttons["chat.send"].tap()
+            XCTAssertTrue(output.waitForExistence(timeout: 10))
+            XCTAssertEqual(output.label, "No information returned")
+            app.buttons["slash.result.done"].tap()
+        }
+        let after = try await state()
+        XCTAssertEqual(after["prompts"], 0)
+        XCTAssertEqual(after["executions"], 3)
+        XCTAssertEqual(after["creates"], 0)
+        XCTAssertEqual(after["resumes"], 1)
+        XCTAssertEqual(after["catalogs"], 1)
+    }
+
+    @MainActor
+    func testUnsupportedAndRejectedCommands() async throws {
+        for scenario in ["unsupported", "rejected", "denied"] {
+            let app = launch(scenario: scenario)
+            let existing = app.buttons["chats.session.fixture"]
+            XCTAssertTrue(existing.waitForExistence(timeout: 10))
+            existing.tap()
+            let draft = composer(app)
+            XCTAssertTrue(draft.waitForExistence(timeout: 10))
+            draft.tap()
+            draft.typeText("/status")
+            let status = app.buttons["slash.command.status"]
+            XCTAssertTrue(status.waitForExistence(timeout: 5))
+            if scenario == "unsupported" { XCTAssertTrue(status.label.contains("Availability varies by server")) }
+            status.tap()
+            app.buttons["chat.send"].tap()
+            let error = app.staticTexts["slash.error"]
+            XCTAssertTrue(error.waitForExistence(timeout: 10))
+            XCTAssertEqual(error.label, scenario == "denied" ? "Couldn't run /status. Try again." : "This server doesn't support /status")
+            XCTAssertFalse(app.staticTexts["slash.result.output"].exists)
+            XCTAssertEqual(draft.value as? String, "/status")
+            if scenario == "unsupported" { shot("unsupported") }
+            let counts = try await state()
+            XCTAssertEqual(counts["prompts"], 0)
+            XCTAssertEqual(counts["executions"], 1)
+            XCTAssertEqual(counts["creates"], 0)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testDarkPicker() {
+        let app = launch(scenario: "dark", seeded: true, dark: true)
+        app.buttons["chats.new"].tap()
+        let draft = composer(app)
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        draft.tap()
+        draft.typeText("/")
+        XCTAssertTrue(app.buttons["slash.snippet.Summarize"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["slash.command.help"].isEnabled)
+        shot("picker-dark")
+    }
+
+    private func state() async throws -> [String: Int] {
+        let url = URL(string: "http://127.0.0.1:18765/\(fixtureID)/fixture/state")!
+        let (data, _) = try await URLSession.shared.data(from: url)
+        return try JSONDecoder().decode([String: Int].self, from: data)
+    }
+
+    @MainActor
+    private func launch(scenario: String? = nil, seeded: Bool = false, dark: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["-hermes.address", "http://127.0.0.1:18765/\(UUID())", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
-        app.launchEnvironment["HERMES_TEST_SNIPPETS"] = "[]"
+        fixtureID = scenario.map { "slash-\($0)-\(UUID())" } ?? UUID().uuidString
+        app.launchArguments = ["-hermes.address", "http://127.0.0.1:18765/\(fixtureID)", "-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-hermes.theme", dark ? "dark" : "light"]
+        app.launchEnvironment["HERMES_TEST_SNIPPETS"] = seeded
+            ? #"[{"id":"5729ED5D-DB10-467B-A210-AECB7589A60B","name":"Summarize","body":"Summarize this conversation."}]"# : "[]"
         app.launch()
         XCTAssertTrue(app.buttons["chats.new"].waitForExistence(timeout: 10))
         return app

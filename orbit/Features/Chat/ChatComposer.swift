@@ -17,10 +17,27 @@ struct ChatComposer<Content: View>: View {
     @State private var restoreFocus = false
     @State private var result: SlashResult?
     @State private var stopCount = 0
+    @State private var catalog = HermesCommandCatalog.fallback
+    @State private var running: String?
+    @State private var commandError: String?
+    @State private var requestID = UUID()
+    @State private var draftRevision = UUID()
+    private var catalogScope: String {
+        let client = HermesClient.shared
+        return client.address + "\n" + client.profile + "\n" + String(describing: client.state)
+    }
     private var store: PromptSnippetStore { HermesClient.shared.snippetStore }
 
     private var bottomBar: some View {
         VStack(spacing: 6) {
+            if let running {
+                Text("Running /\(running)…").font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("slash.running")
+            }
+            if let commandError {
+                Text(commandError).font(.footnote).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("slash.error")
+            }
             if let selected {
                 HStack {
                     Text(chat.isGenerating ? "Run when the reply ends" : "Run /\(selected.name)")
@@ -45,8 +62,8 @@ struct ChatComposer<Content: View>: View {
                 if let anchor, showPicker && focused {
                     VStack(spacing: 0) {
                         Spacer(minLength: 0)
-                        SlashCommandMenu(query: String(draft.dropFirst()), commands: HermesCommand.fallback,
-                                         maximumHeight: min(320, max(140, proxy[anchor].minY / 2)),
+                        SlashCommandMenu(query: String(draft.dropFirst()), commands: catalog.commands, isFallback: catalog.isFallback,
+                                         maximumHeight: min(320, max(140, proxy[anchor].minY - 8)),
                                          unavailable: unavailable, dismiss: { showPicker = false },
                                          selectSnippet: insert, selectCommand: arm, manage: manage)
                     }
@@ -68,7 +85,18 @@ struct ChatComposer<Content: View>: View {
         }
         .sheet(item: $result, onDismiss: { focused = true }) { SlashResultView(result: $0) }
         .onChange(of: focused) { _, value in if !value { showPicker = false } }
-        .onDisappear { showPicker = false }
+        .onDisappear { showPicker = false; requestID = UUID(); running = nil }
+        .task(id: catalogScope) {
+            requestID = UUID()
+            running = nil
+            commandError = nil
+            selected = nil
+            catalog = .fallback
+            let scope = catalogScope
+            let loaded = await chat.commands()
+            guard !Task.isCancelled, scope == catalogScope else { return }
+            catalog = loaded
+        }
         .onChange(of: dismissSuggestions) { showPicker = false }
         .task {
             guard isNewChat, chat.messages.isEmpty else { return }
@@ -81,7 +109,9 @@ struct ChatComposer<Content: View>: View {
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 8) {
             ComposerTextView(text: $draft, isFocused: $focused) { eligible in
+                draftRevision = UUID()
                 selected = nil
+                commandError = nil
                 showPicker = eligible
             } selectionChanged: { eligible in
                 if !eligible { showPicker = false }
@@ -120,7 +150,7 @@ struct ChatComposer<Content: View>: View {
     }
 
     private var canSubmit: Bool {
-        !chat.isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        running == nil && !chat.isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (selected.map { unavailable($0) == nil } ?? true)
     }
 
@@ -128,10 +158,12 @@ struct ChatComposer<Content: View>: View {
         guard !command.isLocal else { return nil }
         guard HermesClient.shared.state == .connected else { return "Connect to use Hermes commands" }
         guard chat.key != nil else { return "Send a message first" }
-        return "Availability varies by server"
+        return nil
     }
 
     private func insert(_ snippet: PromptSnippet) {
+        draftRevision = UUID()
+        commandError = nil
         draft = snippet.body
         selected = nil
         showPicker = false
@@ -141,6 +173,8 @@ struct ChatComposer<Content: View>: View {
     }
 
     private func arm(_ command: HermesCommand) {
+        draftRevision = UUID()
+        commandError = nil
         draft = "/\(command.name)"
         selected = command
         showPicker = false
@@ -162,10 +196,42 @@ struct ChatComposer<Content: View>: View {
         showPicker = restorePicker && ComposerTextView.isTrigger(draft)
     }
 
+    private func run(_ command: HermesCommand) {
+        let token = UUID()
+        requestID = token
+        let scope = catalogScope
+        let originalDraft = draft
+        let revision = draftRevision
+        running = command.name
+        commandError = nil
+        showPicker = false
+        Task {
+            do {
+                let reply = try await chat.execute(command)
+                guard requestID == token, catalogScope == scope else { return }
+                running = nil
+                guard draftRevision == revision, selected?.name == command.name, draft == originalDraft else { return }
+                result = SlashResult(title: "/\(command.name)", output: reply["output"].text ?? "",
+                                     warning: reply["warning"].text)
+                selected = nil
+                draft = ""
+            } catch {
+                guard requestID == token, catalogScope == scope else { return }
+                running = nil
+                guard draftRevision == revision, selected?.name == command.name, draft == originalDraft else { return }
+                let unsupported = (error as? HermesRPCError)?.isUnsupported == true
+                commandError = unsupported ? "This server doesn't support /\(command.name)" : "Couldn't run /\(command.name). Try again."
+            }
+        }
+    }
+
     private func submit() {
         guard canSubmit else { return }
         if let selected {
-            guard selected.isLocal else { return }
+            guard selected.isLocal else {
+                run(selected)
+                return
+            }
             result = SlashResult(title: "/help", output: "Type / to find shortcuts. Select a saved snippet to insert its full prompt, then edit and Send.\n\nSelect a command, then Run to view its result. Use as message sends the text normally.\n\n" + HermesCommand.fallback.map { "/\($0.name) — \($0.summary)" }.joined(separator: "\n"))
             self.selected = nil
             draft = ""

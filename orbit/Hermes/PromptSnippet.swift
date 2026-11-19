@@ -22,15 +22,31 @@ struct HermesCommand: Identifiable {
         .init(name: "usage", summary: "Show token usage")
     ]
 
-    static func parse(_ reply: JSON) -> [HermesCommand] {
-        let rows = reply.list ?? reply["commands"].list ?? reply["catalog"].list ?? []
-        var seen: Set<String> = []
-        return rows.compactMap { row in
-            guard let raw = row["name"].text ?? row.text else { return nil }
-            let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            guard !name.isEmpty, !name.contains(where: { $0.isWhitespace }), seen.insert(name).inserted else { return nil }
-            return HermesCommand(name: name, summary: row["description"].text ?? "Run /\(name)")
+    static func parse(_ reply: JSON) -> [HermesCommand]? {
+        guard let pairs = reply["pairs"].list, !pairs.isEmpty else { return nil }
+        var summaries: [String: String] = [:]
+        var hasValidPair = false
+        for row in pairs {
+            guard let pair = row.list, pair.count == 2, let raw = pair[0].text,
+                  let summary = pair[1].text else { continue }
+            hasValidPair = true
+            let token = raw.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+            let canonical = (reply["canon"][token].text ?? token)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+            let name = canonical == "ctx" ? "context" : canonical
+            guard fallback.contains(where: { $0.name == name && !$0.isLocal }) else { continue }
+            summaries[name] = summary
+        }
+        guard hasValidPair else { return nil }
+        return fallback.filter { $0.isLocal || summaries[$0.name] != nil }.map {
+            HermesCommand(name: $0.name, summary: summaries[$0.name] ?? $0.summary)
         }
     }
+}
+
+struct HermesCommandCatalog {
+    var commands: [HermesCommand]
+    var isFallback: Bool
+
+    static let fallback = HermesCommandCatalog(commands: HermesCommand.fallback, isFallback: true)
 }

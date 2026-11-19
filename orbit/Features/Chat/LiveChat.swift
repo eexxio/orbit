@@ -92,6 +92,17 @@ final class LiveChat {
         }
     }
 
+    func commands() async -> HermesCommandCatalog {
+        await HermesClient.shared.commands(using: conversation)
+    }
+
+    func execute(_ command: HermesCommand) async throws -> JSON {
+        guard key != nil, !isGenerating, pendingInterrupt == nil,
+              HermesClient.shared.state == .connected else { throw HermesError.socketClosed }
+        let gateway = conversation ?? makeConversation()
+        return try await gateway.execute(command)
+    }
+
     func stop() {
         guard isGenerating else { return }
         let chat = conversation
@@ -130,7 +141,7 @@ final class LiveChat {
     }
 
     private func makeConversation() -> HermesConversation {
-        let chat = HermesConversation(storedKey: key)
+        let chat = HermesClient.shared.takeCatalogSocket(for: key) ?? HermesConversation(storedKey: key)
         // `[weak self]` throughout: the conversation is owned by this object.
         chat.onDelta = { [weak self] delta in
             guard let self, isGenerating, pendingInterrupt == nil else { return }

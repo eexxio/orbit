@@ -3,6 +3,7 @@ import SwiftUI
 struct SlashCommandMenu: View {
     let query: String
     let commands: [HermesCommand]
+    let isFallback: Bool
     let maximumHeight: CGFloat
     let unavailable: (HermesCommand) -> String?
     let dismiss: () -> Void
@@ -45,14 +46,15 @@ struct SlashCommandMenu: View {
                             }
                         }
                         if !filteredCommands.isEmpty {
-                            heading("COMMANDS")
+                            heading("COMMANDS").accessibilityIdentifier("slash.commands")
                             ForEach(filteredCommands) { command in
                                 let reason = unavailable(command)
-                                row("/\(command.name)", detail: reason ?? command.summary,
+                                let detail = reason ?? (isFallback && !command.isLocal ? "Availability varies by server" : command.summary)
+                                row("/\(command.name)", detail: detail,
                                     icon: command.isLocal ? "questionmark.circle" : "chevron.left.forwardslash.chevron.right",
                                     monospaced: true) { selectCommand(command) }
                                     .disabled(reason != nil)
-                                    .accessibilityLabel("Slash \(command.name), \(reason ?? command.summary), \(command.isLocal ? "Orbit help" : "Hermes command")")
+                                    .accessibilityLabel("Slash \(command.name), \(detail), \(command.isLocal ? "Orbit help" : "Hermes command")")
                                     .accessibilityHint("Select, then Run")
                                     .accessibilityIdentifier("slash.command.\(command.name)")
                             }

@@ -140,7 +140,7 @@ final class MessageActionsTests: XCTestCase {
         regenerate.tap()
         XCTAssertTrue(app.staticTexts["Run this turn again?"].waitForExistence(timeout: 5))
         screenshot("regenerate-confirmation")
-        XCTAssertTrue(app.staticTexts["This reply ran 1 tool(s). Running it again may repeat what they did."].exists)
+        XCTAssertTrue(app.staticTexts["This reply used a tool. Running it again may repeat what it did."].exists)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.15)).tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.staticTexts["Run this turn again?"])
         await fulfillment(of: [dismissed], timeout: 5)
@@ -157,10 +157,18 @@ final class MessageActionsTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["chat.reply.failed"].waitForExistence(timeout: 10))
         app.buttons["chat.reply.retry"].tap()
         XCTAssertTrue(app.staticTexts["Run this turn again?"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["This reply ran 1 tool(s). Running it again may repeat what they did."].exists)
+        XCTAssertTrue(app.staticTexts["This reply used a tool. Running it again may repeat what it did."].exists)
         app.buttons["Regenerate"].tap()
         waitForReply("Reply 2: Tools failure", in: app)
         try await assertHistory(["Tools reply", "Reply 2: Tools reply", "Tools failure", "Reply 2: Tools failure"])
+
+        send("Two tools reply", in: app)
+        waitForReply("Reply 1: Two tools reply", in: app)
+        app.staticTexts["Reply 1: Two tools reply"].press(forDuration: 1)
+        XCTAssertTrue(app.buttons["message.action.regenerate"].waitForExistence(timeout: 5))
+        app.buttons["message.action.regenerate"].tap()
+        XCTAssertTrue(app.staticTexts["Run this turn again?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["This reply used 2 tools. Running it again may repeat what they did."].exists)
     }
 
     @MainActor

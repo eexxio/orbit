@@ -65,7 +65,9 @@ struct MessageReplacementConfirmation: ViewModifier {
             Button("Regenerate", action: regenerate)
             Button("Cancel", role: .cancel, action: cancel)
         } message: {
-            Text("This reply ran \(toolCount) tool(s). Running it again may repeat what they did.")
+            Text(toolCount == 1
+                 ? "This reply used a tool. Running it again may repeat what it did."
+                 : "This reply used \(toolCount) tools. Running it again may repeat what they did.")
         }
     }
 }

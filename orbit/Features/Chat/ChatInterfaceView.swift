@@ -47,6 +47,10 @@ struct ChatInterfaceView: View {
         .task { attachments = await AttachmentFixtures.load() }
         #endif
         .onAppear { chat.isOnScreen = true }
+        .onChange(of: chat.attachmentFallbackText) { _, text in
+            guard let text, !text.isEmpty else { return }
+            draft = draft.isEmpty ? text : text + "\n" + draft
+        }
         // Only lets the chat go if no turn is running; otherwise it finishes in the background.
         .onDisappear { chat.isOnScreen = false }
     }
@@ -331,61 +335,14 @@ struct ChatInterfaceView: View {
         attachmentError = nil
     }
 
-    @ViewBuilder
     private var replyStatus: some View {
-        switch chat.replyState {
-        case .waiting where showsWaitingIndicator:
-            HStack(spacing: 6) {
-                Image(systemName: "brain")
-                    .symbolEffect(.pulse)
-                    .accessibilityHidden(true)
-                Text("Thinking…")
-                    .accessibilityIdentifier("chat.reply.waiting")
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        case .streaming:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini).accessibilityHidden(true)
-                Text("Replying…")
-                    .accessibilityIdentifier("chat.reply.streaming")
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        case .stopped:
-            HStack(spacing: 6) {
-                Image(systemName: "stop.circle")
-                    .accessibilityHidden(true)
-                Text("Stopped")
-                    .accessibilityIdentifier("chat.reply.stopped")
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        case .interrupted(let detail):
-            replyIssue("Reply interrupted", detail: detail, identifier: "chat.reply.interrupted")
-        case .failed(let detail):
-            replyIssue("Reply failed", detail: detail, identifier: "chat.reply.failed")
-        default:
-            EmptyView()
+        ChatReplyStatus(chat: chat, showsWaitingIndicator: showsWaitingIndicator) {
+            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            chat.send(text)
+            draft = ""
+            composerIsFocused = false
         }
-    }
-
-    private func replyIssue(_ title: String, detail: String, identifier: String) -> some View {
-        Label {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .fontWeight(.semibold)
-                    .accessibilityIdentifier(identifier)
-                Text(detail)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("chat.reply.error")
-            }
-        } icon: {
-            Image(systemName: "exclamationmark.circle")
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
-        }
-        .font(.subheadline)
     }
 
     /// Something is on its way but no row shows it yet. A running tool row has its own spinner.

@@ -25,3 +25,6 @@ also adds a text file for manual tray checks. The simulator PhotosPicker is usab
 manually, but its out-of-process photo cells expose no stable identifiers for the
 identifier-only UI tests. The fixture still exercises the actual gateway staging
 and prompt submission paths, including an unsupported-method server scenario.
+
+The staging-stop scenario holds the image RPC until the test releases it, then verifies detach,
+zero file staging calls, and zero prompt submissions through `/fixture/state`.

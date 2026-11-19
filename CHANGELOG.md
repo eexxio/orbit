@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Stop cancels pending attachment staging, and unsupported servers restore your message draft.
 - New chat opens a blank conversation after a completed, interrupted, or failed reply instead of reopening the previous transcript.
 
 ### Added

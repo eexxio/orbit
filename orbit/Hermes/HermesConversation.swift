@@ -43,6 +43,7 @@ final class HermesConversation {
     /// Sends one prompt, opening the socket and session first when needed.
     func send(_ text: String, attachments: [OutgoingAttachment] = []) async throws {
         if socket == nil || runtimeID == nil { try await open() }
+        try Task.checkCancellation()
         guard let runtimeID else { throw HermesError.unsupported }
         acceptsReplyEvents = true
         var paths: [String] = []
@@ -71,9 +72,10 @@ final class HermesConversation {
             }
             try Task.checkCancellation()
         } catch {
-            for path in paths { _ = try? await call("image.detach", ["session_id": .string(runtimeID), "path": .string(path)]) }
+            for path in paths { _ = try? await call("image.detach", ["session_id": .string(runtimeID), "path": .string(path)], timeout: .seconds(3)) }
+            if Task.isCancelled { throw CancellationError() }
             if case HermesError.rpc(let code, let message) = error,
-               code == -32601 || ((code == 4000 || message.contains("invalid_params")) && message.contains(method)) {
+               code == -32601 || ((code == -32602 || code == 4000 || message.lowercased().contains("invalid_params")) && message.contains(method)) {
                 client.supportsAttachments = false
                 throw HermesError.attachmentsUnsupported
             }

@@ -23,7 +23,10 @@ struct ChatInterfaceView: View {
 
     @FocusState private var composerIsFocused: Bool
 
-    private let columnWidth: CGFloat = 720
+    private let isPad = UIDevice.current.userInterfaceIdiom == .pad
+    private var columnWidth: CGFloat { isPad ? 840 : 720 }
+    private var chatFont: Font { isPad ? .title3 : .body }
+    private var replyTheme: MarkdownUI.Theme { isPad ? .basic.text { FontSize(20) } : .basic }
 
     var body: some View {
         NavigationStack {
@@ -223,6 +226,7 @@ struct ChatInterfaceView: View {
                 Spacer(minLength: 48)
 
                 Text(message.text)
+                    .font(chatFont)
                     .padding(.horizontal, 15)
                     .padding(.vertical, 11)
                     .foregroundStyle(accent.onColor)
@@ -235,7 +239,7 @@ struct ChatInterfaceView: View {
             VStack(alignment: .leading, spacing: copyText == nil ? 12 : 0) {
                 // Full block-level Markdown: headings, lists, code blocks, quotes, tables.
                 Markdown(message.text)
-                    .markdownTheme(.basic)
+                    .markdownTheme(replyTheme)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -271,11 +275,13 @@ struct ChatInterfaceView: View {
     // MARK: - Composer
 
     private var composer: some View {
-        let shape = RoundedRectangle(cornerRadius: 22)
+        let shape = RoundedRectangle(cornerRadius: isPad ? 26 : 22)
+        let sendIconSize: CGFloat = isPad ? 34 : 30
         let historyPrompt = Text("Ask anything").foregroundColor(.primary.opacity(0.8))
         return HStack(alignment: .bottom, spacing: 8) {
             // Grows with its text up to six lines, then scrolls.
             TextField("Ask anything", text: $draft, prompt: isFollowingBottom ? nil : historyPrompt, axis: .vertical)
+                .font(chatFont)
                 .focused($composerIsFocused)
                 .lineLimit(1...6)
                 .padding(.vertical, 11)
@@ -284,25 +290,25 @@ struct ChatInterfaceView: View {
             Button {
                 sendMessage()
             } label: {
-                // Resizable so the circle fills exactly 30pt; a font-sized symbol
+                // Resizable so the circle fills the frame; a font-sized symbol
                 // carries extra baseline space below it and sits off-center.
                 Image(systemName: "arrow.up.circle.fill")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 30, height: 30)
+                    .frame(width: sendIconSize, height: sendIconSize)
             }
             .tint(accent.color)
             .disabled(!canSend)
             .animation(.default, value: canSend)
             .accessibilityLabel("Send")
             .accessibilityIdentifier("chat.send")
-            .padding(.bottom, 7)
+            .padding(.bottom, isPad ? 9 : 7)
         }
         .padding(.leading, 16)
         .padding(.trailing, 7)
-        .frame(minHeight: 44)
+        .frame(minHeight: isPad ? 52 : 44)
         // At rest the bar narrows toward the center; focusing it expands to the conversation width.
-        .frame(maxWidth: composerIsCollapsed ? 240 : columnWidth)
+        .frame(maxWidth: composerIsCollapsed ? (isPad ? 336 : 240) : columnWidth)
         .contentShape(.rect)
         .onTapGesture { composerIsFocused = true }
         .background(Color(uiColor: .systemBackground).opacity(isFollowingBottom ? 0 : 1), in: shape)

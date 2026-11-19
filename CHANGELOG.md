@@ -27,6 +27,7 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 - Lower the minimum iOS and iPadOS version to 27.0, so the app builds with Xcode 27.0.
 - Group chat rows by turn, keep wide conversations readable, and make copying replies easier.
+- Use larger message text and give the chat composer more room on iPad.
 
 ### Fixed
 - Chat no longer jumps to the newest reply while you read earlier messages. Use the down arrow to resume following the reply.

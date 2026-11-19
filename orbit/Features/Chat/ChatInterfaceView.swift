@@ -17,29 +17,24 @@ struct ChatInterfaceView: View {
     @AppStorage(AppearanceKey.showToolCalls) private var showToolCalls = true
     @State private var chat: LiveChat
     @State private var scrollPosition = ScrollPosition()
-    @State private var draft = ""
-    @State private var stopCount = 0
-
-    @FocusState private var composerIsFocused: Bool
-
+    @State private var dismissSuggestions = 0
     var body: some View {
         NavigationStack {
-            Group {
-                if chat.isLoadingHistory && chat.messages.isEmpty {
-                    loadingState
-                } else if chat.messages.isEmpty {
-                    emptyState
-                } else {
-                    conversation
+            ChatComposer(content: {
+                Group {
+                    if chat.isLoadingHistory && chat.messages.isEmpty {
+                        loadingState
+                    } else if chat.messages.isEmpty {
+                        emptyState
+                    } else {
+                        conversation
+                    }
                 }
-            }
-            .background(Color(uiColor: .systemBackground))
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                composer
-            }
+                .background(Color(uiColor: .systemBackground))
+                .simultaneousGesture(TapGesture().onEnded { dismissSuggestions += 1 })
+            }, chat: chat, isNewChat: sessionKey == nil, dismissSuggestions: dismissSuggestions)
         }
         .task { await chat.loadHistory() }
-        .task { await focusComposerForNewChat() }
         .onAppear { chat.isOnScreen = true }
         // Only lets the chat go if no turn is running; otherwise it finishes in the background.
         .onDisappear { chat.isOnScreen = false }
@@ -189,6 +184,7 @@ struct ChatInterfaceView: View {
                 Spacer(minLength: 48)
 
                 Text(message.text)
+                    .accessibilityIdentifier("chat.user.\(message.text)")
                     .padding(.horizontal, 15)
                     .padding(.vertical, 11)
                     .foregroundStyle(accent.onColor)
@@ -230,80 +226,6 @@ struct ChatInterfaceView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    // MARK: - Composer
-
-    private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            // Grows with its text up to six lines, then scrolls.
-            TextField("Ask anything", text: $draft, axis: .vertical)
-                .focused($composerIsFocused)
-                .lineLimit(1...6)
-                .padding(.vertical, 11)
-                .accessibilityIdentifier("chat.composer")
-
-            Button {
-                if chat.isGenerating {
-                    stopCount += 1
-                    chat.stop()
-                    AccessibilityNotification.Announcement("Reply stopped").post()
-                } else {
-                    sendMessage()
-                }
-            } label: {
-                // Resizable so the circle fills exactly 30pt; a font-sized symbol
-                // carries extra baseline space below it and sits off-center.
-                Image(systemName: chat.isGenerating ? "stop.circle.fill" : "arrow.up.circle.fill")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 30, height: 30)
-                    .contentTransition(.symbolEffect(.replace.downUp))
-            }
-            .tint(accent.color)
-            .disabled(!chat.isGenerating && !canSend)
-            .animation(.default, value: canSend)
-            .animation(.snappy(duration: 0.2), value: chat.isGenerating)
-            .sensoryFeedback(.impact(weight: .medium), trigger: stopCount)
-            .accessibilityLabel(chat.isGenerating ? "Stop reply" : "Send")
-            .accessibilityIdentifier(chat.isGenerating ? "chat.stop" : "chat.send")
-            .keyboardShortcut(chat.isGenerating ? KeyboardShortcut(".", modifiers: .command) : nil)
-            .padding(.bottom, 7)
-        }
-        .padding(.leading, 16)
-        .padding(.trailing, 7)
-        .frame(minHeight: 44)
-        // At rest the bar narrows toward the center; focusing it spreads it full width.
-        .frame(maxWidth: composerIsCollapsed ? 240 : .infinity)
-        .contentShape(.rect)
-        .onTapGesture { composerIsFocused = true }
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
-        .animation(.spring(duration: 0.4, bounce: 0.2), value: composerIsCollapsed)
-    }
-
-    /// Collapsed while unfocused, unless there is a draft that would get squeezed.
-    private var composerIsCollapsed: Bool {
-        !composerIsFocused && draft.isEmpty
-    }
-
-    private var canSend: Bool {
-        !chat.isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    // MARK: - Send Message
-
-    private func sendMessage() {
-        let text = draft.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-
-        guard canSend else { return }
-
-        draft = ""
-        composerIsFocused = false
-        chat.send(text)
     }
 
     @ViewBuilder
@@ -368,17 +290,6 @@ struct ChatInterfaceView: View {
         return !(showToolCalls && chat.messages.last?.tool?.isDone == false)
     }
 
-    // MARK: - Hermes
-
-    /// A new chat opens ready to type. The short wait lets the push transition settle,
-    /// since focus set mid-animation is dropped and the keyboard never appears.
-    private func focusComposerForNewChat() async {
-        guard sessionKey == nil, chat.messages.isEmpty else { return }
-        try? await Task.sleep(for: .milliseconds(450))
-        // Recheck: a message sent during the wait already cleared focus on purpose.
-        guard !Task.isCancelled, chat.messages.isEmpty, !chat.isGenerating else { return }
-        composerIsFocused = true
-    }
 }
 
 #Preview {

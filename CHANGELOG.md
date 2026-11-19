@@ -11,6 +11,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 - Stop a generating reply from the composer, keeping partial text and your next draft with a quiet Stopped status.
+- Discover Hermes slash commands and save, organize, and reuse prompt snippets from the composer.
 - Connect to a Hermes Agent dashboard: open, username/password, and Cloudflare Access sign-in.
 - Chat list with search, and new chats.
 - Streaming chat over the Hermes gateway WebSocket, with Markdown-rendered replies.

@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 GATES = defaultdict(threading.Event)
 STATS_LOCK = threading.Lock()
-STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
+STATS = defaultdict(lambda: {"connections": 0, "prompts": 0, "catalogs": 0, "executions": 0, "creates": 0, "resumes": 0})
 PARTIAL = "Here is the first part"
 SCENARIOS = {
     "Complete the reply": "complete",
@@ -48,6 +48,10 @@ class HermesStub(BaseHTTPRequestHandler):
             "/api/profiles/active": {"current": "default"},
             "/api/sessions": {"sessions": []},
         }.get(path)
+        if fixture_id.startswith("slash-") and path == "/api/sessions":
+            data = {"sessions": [{"id": "fixture", "title": "Existing chat", "last_active": 1795108847}]}
+        if path == "/api/sessions/fixture/messages":
+            data = {"messages": [{"role": "user", "content": "An earlier message"}]}
         if data is None:
             self.send_error(404)
             return
@@ -99,9 +103,34 @@ class HermesStub(BaseHTTPRequestHandler):
             while (request := self.read_request()) is not None:
                 method = request["method"]
                 if method in {"session.create", "session.resume"}:
+                    with STATS_LOCK:
+                        STATS[fixture_id]["creates" if method == "session.create" else "resumes"] += 1
                     self.result(request, {"session_id": "runtime", "stored_session_id": "fixture"})
                 elif method == "gateway.ping":
                     self.result(request, {})
+                elif method in {"commands.catalog", "slash.exec"}:
+                    with STATS_LOCK:
+                        STATS[fixture_id]["catalogs" if method == "commands.catalog" else "executions"] += 1
+                    params = request.get("params", {})
+                    if fixture_id.startswith("slash-unsupported-"):
+                        self.rpc_error(request, -32601, "Method not found")
+                    elif method == "commands.catalog":
+                        self.result(request, {"pairs": [["/help", "Server help"], ["status", "Show chat details"],
+                                                       ["ctx", "Show context"], ["usage", "Show usage"],
+                                                       ["model", "Must not appear"]],
+                                              "canon": {"ctx": "context"}})
+                    elif set(params) - {"session_id", "command", "profile"} or params.get("session_id") != "runtime":
+                        self.rpc_error(request, -32602, "invalid_params")
+                    elif fixture_id.startswith("slash-rejected-"):
+                        self.rpc_error(request, -32000, "unsupported_command")
+                    elif fixture_id.startswith("slash-denied-"):
+                        self.rpc_error(request, -32000, "permission_denied")
+                    elif params.get("command") == "/context":
+                        self.result(request, {"output": "(no output)"})
+                    elif params.get("command") == "/usage":
+                        self.result(request, {"output": "", "warning": "Usage is not available yet."})
+                    else:
+                        self.result(request, {"output": "\u001b[32mStatus: ready\u001b[0m", "warning": "Read-only snapshot"})
                 elif method == "prompt.submit":
                     self.scenario = SCENARIOS.get(request["params"]["text"])
                     with STATS_LOCK:
@@ -139,6 +168,9 @@ class HermesStub(BaseHTTPRequestHandler):
     def stream_reply(self, fixture_id, text):
         if text == "Send after reconnecting":
             self.event("message.complete", {"text": "The next reply arrived."})
+            return True
+        if text not in SCENARIOS:
+            self.event("message.complete", {"text": "Snippet received."})
             return True
         scenario = SCENARIOS[text]
         self.scenario = scenario
@@ -218,6 +250,9 @@ class HermesStub(BaseHTTPRequestHandler):
         self.write_json({"jsonrpc": "2.0", "method": "event", "params": {
             "type": kind, "session_id": "runtime", "payload": payload or {},
         }})
+
+    def rpc_error(self, request, code, message):
+        self.write_json({"jsonrpc": "2.0", "id": request["id"], "error": {"code": code, "message": message}})
 
     def result(self, request, result):
         self.write_json({"jsonrpc": "2.0", "id": request["id"], "result": result})

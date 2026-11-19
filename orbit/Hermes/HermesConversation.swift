@@ -12,6 +12,8 @@ final class HermesConversation {
     private var heartbeat: Task<Void, Never>?
     private var connectionID = UUID()
     private var nextID = 0
+    private var openingTask: Task<Void, Error>?
+    private var socketTask: Task<Void, Error>?
     private var pending: [Int: CheckedContinuation<JSON, Error>] = [:]
 
     var onDelta: ((String) -> Void)?
@@ -31,7 +33,13 @@ final class HermesConversation {
 
     init(storedKey: String?) { self.storedKey = storedKey }
 
+    func attach(storedKey: String?) {
+        guard runtimeID == nil else { return }
+        self.storedKey = storedKey
+    }
+
     func close() {
+        if socket != nil { client.invalidateCommandCatalog() }
         connectionID = UUID()
         reader?.cancel(); heartbeat?.cancel()
         reader = nil; heartbeat = nil
@@ -42,7 +50,7 @@ final class HermesConversation {
 
     /// Sends one prompt, opening the socket and session first when needed.
     func send(_ text: String) async throws {
-        if socket == nil || runtimeID == nil { try await open() }
+        try await ensureOpen()
         guard let runtimeID else { throw HermesError.unsupported }
         acceptsReplyEvents = true
         _ = try await call("prompt.submit", ["session_id": .string(runtimeID), "text": .string(text), "queued": .bool(true)])
@@ -59,8 +67,93 @@ final class HermesConversation {
         }
     }
 
+    func commands() async throws -> JSON {
+        try await boundedRead {
+            try await self.ensureSocket()
+            var params: [String: JSON] = ["profile": .string(self.client.profile)]
+            if let runtimeID = self.runtimeID { params["session_id"] = .string(runtimeID) }
+            return try await self.call("commands.catalog", params, timeout: .seconds(3))
+        }
+    }
+
+    func execute(_ command: HermesCommand) async throws -> JSON {
+        guard storedKey != nil, !command.isLocal,
+              HermesCommand.fallback.contains(where: { $0.name == command.name }) else {
+            throw HermesError.unsupported
+        }
+        return try await boundedRead {
+            try await self.ensureOpen()
+            guard let runtimeID = self.runtimeID else { throw HermesError.unsupported }
+            return try await self.call("slash.exec", [
+                "session_id": .string(runtimeID), "command": .string("/\(command.name)"),
+                "profile": .string(self.client.profile)
+            ], timeout: .seconds(3))
+        }
+    }
+
+    private func boundedRead(_ operation: @escaping @MainActor () async throws -> JSON) async throws -> JSON {
+        var worker: Task<Void, Never>?
+        var deadline: Task<Void, Never>?
+        defer { worker?.cancel(); deadline?.cancel() }
+        return try await withCheckedThrowingContinuation { continuation in
+            var pending: CheckedContinuation<JSON, Error>? = continuation
+            worker = Task {
+                let result: Result<JSON, Error>
+                do { result = .success(try await operation()) }
+                catch { result = .failure(error) }
+                pending?.resume(with: result)
+                pending = nil
+            }
+            deadline = Task {
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                if runtimeID == nil { close() }
+                pending?.resume(throwing: HermesError.socketClosed)
+                pending = nil
+            }
+        }
+    }
+
+    private func ensureOpen() async throws {
+        if let openingTask { return try await openingTask.value }
+        guard socket == nil || runtimeID == nil else { return }
+        let task = Task { try await open() }
+        openingTask = task
+        defer { openingTask = nil }
+        try await task.value
+    }
+
     private func open() async throws {
-        close()
+        try await ensureSocket()
+        guard runtimeID == nil else { return }
+        let task = socket
+        let profile = client.profile
+        if let storedKey {
+            let reply = try await call("session.resume", ["profile": .string(profile), "session_id": .string(storedKey),
+                                                          "close_on_disconnect": .bool(false), "source": .string("gui"),
+                                                          "omit_messages": .bool(true)])
+            guard socket === task else { throw HermesError.socketClosed }
+            guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
+            runtimeID = runtime
+        } else {
+            let reply = try await call("session.create", ["profile": .string(profile), "source": .string("gui")])
+            guard socket === task else { throw HermesError.socketClosed }
+            guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
+            runtimeID = runtime
+            storedKey = reply["stored_session_id"].text ?? reply["info"]["stored_session_id"].text
+        }
+    }
+
+    private func ensureSocket() async throws {
+        if let socketTask { return try await socketTask.value }
+        guard socket == nil else { return }
+        let task = Task { try await openSocket() }
+        socketTask = task
+        defer { socketTask = nil }
+        do { try await task.value }
+        catch { close(); throw error }
+    }
+
+    private func openSocket() async throws {
         let opening = connectionID
         let (upgrade, session) = try await client.gatewayUpgrade()
         guard connectionID == opening else { throw HermesError.socketClosed }
@@ -77,22 +170,6 @@ final class HermesConversation {
         }
         startReader(task)
         startHeartbeat(task)
-
-        let profile = client.profile
-        if let storedKey {
-            let reply = try await call("session.resume", ["profile": .string(profile), "session_id": .string(storedKey),
-                                                          "close_on_disconnect": .bool(false), "source": .string("gui"),
-                                                          "omit_messages": .bool(true)])
-            guard socket === task else { throw HermesError.socketClosed }
-            guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
-            runtimeID = runtime
-        } else {
-            let reply = try await call("session.create", ["profile": .string(profile), "source": .string("gui")])
-            guard socket === task else { throw HermesError.socketClosed }
-            guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
-            runtimeID = runtime
-            storedKey = reply["stored_session_id"].text ?? reply["info"]["stored_session_id"].text
-        }
     }
 
     private func call(_ method: String, _ params: [String: JSON], timeout: Duration? = nil) async throws -> JSON {
@@ -159,7 +236,7 @@ final class HermesConversation {
         }
         guard let id = frame["id"].int, let continuation = pending.removeValue(forKey: id) else { return }
         if frame["error"] != .null {
-            continuation.resume(throwing: HermesError.server(frame["error"]["message"].text ?? "The server refused the request."))
+            continuation.resume(throwing: HermesRPCError(detail: frame["error"]))
         } else {
             continuation.resume(returning: frame["result"])
         }
@@ -229,5 +306,16 @@ final class HermesConversation {
         case .data(let d): return JSON.decode(d) ?? .null
         @unknown default: return .null
         }
+    }
+}
+
+struct HermesRPCError: LocalizedError {
+    let detail: JSON
+    var errorDescription: String? { detail["message"].text ?? "The server refused the request." }
+    var isUnsupported: Bool {
+        detail["code"].int == -32601 || [
+            detail["message"].text, detail["reason"].text, detail["data"]["reason"].text,
+            detail["data"]["message"].text, detail["data"].text
+        ].contains("unsupported_command")
     }
 }

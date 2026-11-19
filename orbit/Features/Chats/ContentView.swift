@@ -27,6 +27,7 @@ struct ContentView: View {
                         ChatInterfaceView(sessionKey: chat.id)
                             .navigationBarTitleDisplayMode(.inline)
                     }
+                    .accessibilityIdentifier("chats.session.\(chat.id)")
                 }
             }
             .navigationTitle("Chats")
@@ -45,6 +46,7 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "gearshape")
                     }
+                    .accessibilityIdentifier("chats.settings")
                 }
 
                 ToolbarSpacer(.flexible, placement: .bottomBar)

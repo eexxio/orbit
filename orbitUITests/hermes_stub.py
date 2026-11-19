@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 GATES = defaultdict(threading.Event)
 STATS_LOCK = threading.Lock()
 STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
+OFFLINE = set()
 PARTIAL = "Here is the first part"
 SCENARIOS = {
     "Complete the reply": "complete",
@@ -25,6 +26,16 @@ SCENARIOS = {
     "Stop while waiting": "stop-waiting",
     "Send the next reply": "next",
 }
+EXPORT_SESSION = {"id": "export-chat", "title": "Weekend in Brașov #1", "last_active": 1}
+EXPORT_MESSAGES = [
+    {"id": 1, "role": "user", "content": "Show me a Swift greeting."},
+    {"id": 2, "role": "assistant", "content": '⚠️ Here is a Swift greeting:\n\n```swift\nprint("Bună!")\n```',
+     "reasoning": "The greeting should be short.",
+     "tool_calls": [{"id": "example", "function": {"name": "check_example",
+                                                   "arguments": '{"path": "private-example.swift"}'}}]},
+    {"id": 3, "role": "tool", "tool_call_id": "example", "content": "Private tool result."},
+    {"id": 4, "role": "assistant", "content": "More in the [Swift docs](https://swift.org/).\n\n| A | B |\n| - | - |\n| 1 | 2 |"},
+]
 
 
 class HermesStub(BaseHTTPRequestHandler):
@@ -33,6 +44,9 @@ class HermesStub(BaseHTTPRequestHandler):
     def do_GET(self):
         fixture_id, _, path = urlsplit(self.path).path.lstrip("/").partition("/")
         path = "/" + path
+        if fixture_id in OFFLINE:
+            self.send_error(503)
+            return
         if path == "/fixture/state":
             with STATS_LOCK:
                 self.respond(json.dumps(STATS[fixture_id]).encode(), "application/json")
@@ -48,6 +62,11 @@ class HermesStub(BaseHTTPRequestHandler):
             "/api/profiles/active": {"current": "default"},
             "/api/sessions": {"sessions": []},
         }.get(path)
+        if fixture_id.startswith("export-"):
+            data = {
+                "/api/sessions": {"sessions": [EXPORT_SESSION]},
+                "/api/sessions/export-chat/messages": {"messages": EXPORT_MESSAGES},
+            }.get(path, data)
         if data is None:
             self.send_error(404)
             return
@@ -55,6 +74,11 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path.split("/")
+        if len(path) == 4 and path[1].startswith("export-") and path[2:] == ["fixture", "offline"]:
+            OFFLINE.add(path[1])
+            self.send_response(204)
+            self.end_headers()
+            return
         if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end", "interrupted"}:
             self.send_error(404)
             return

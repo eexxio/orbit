@@ -163,9 +163,12 @@ class HermesStub(BaseHTTPRequestHandler):
                 self.event("message.complete", {"status": "error", "error": "Please try again."})
                 return True
             answer = f"Reply {COUNTS[text]}: {text}"
-            if text == "Tools reply":
+            if text in {"Tools reply", "Tools failure"}:
                 self.event("tool.start", {"tool_id": "lookup", "name": "lookup"})
                 self.event("tool.complete", {"tool_id": "lookup", "summary": "Done"})
+                if text == "Tools failure" and COUNTS[text] == 1:
+                    self.event("message.complete", {"status": "error", "error": "The tool reply failed."})
+                    return True
             self.event("message.complete", {"text": answer})
             HISTORY.append({"role": "assistant", "content": answer})
             return True

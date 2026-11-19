@@ -2,7 +2,7 @@ import Foundation
 
 enum HermesError: LocalizedError {
     case notConfigured, invalidAddress, notDashboard, wrongPassword, browserOnly
-    case http(Int, String?), unsupported, socketClosed, server(String)
+    case http(Int, String?), unsupported, socketClosed, server(String), sessionManagementUnsupported
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +13,7 @@ enum HermesError: LocalizedError {
         case .browserOnly: return "This dashboard only allows browser sign-in. Enable Username & password on the host."
         case .http(let code, let detail): return detail.map { "Server error \(code): \($0)" } ?? "Server error \(code)."
         case .unsupported: return "The server sent a reply this app doesn't understand."
+        case .sessionManagementUnsupported: return "This Hermes server doesn't support that yet."
         case .socketClosed: return "The connection to the server was lost."
         case .server(let message): return message
         }

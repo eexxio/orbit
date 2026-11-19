@@ -18,7 +18,14 @@ final class LiveChat {
     /// The stored session key; nil for a new chat until the host assigns one.
     private(set) var key: String?
     var messages: [ChatMessage] = []
-    private(set) var replyState: ReplyState = .idle
+    private(set) var replyState: ReplyState = .idle {
+        didSet {
+            if let key {
+                HermesClient.shared.setReplying(key, replyState.isActive)
+                if oldValue.isActive && !replyState.isActive { HermesClient.shared.bumpSession(key) }
+            }
+        }
+    }
     var isGenerating: Bool { replyState.isActive }
     /// True while an existing chat's history loads and nothing is cached to show.
     private(set) var isLoadingHistory = false
@@ -111,6 +118,7 @@ final class LiveChat {
     private func adoptKey(_ stored: String?) {
         guard key == nil, let stored else { return }
         key = stored
+        HermesClient.shared.setReplying(stored, isGenerating)
         if isGenerating || isOnScreen { HermesClient.shared.keepLive(self, as: stored) }
     }
 

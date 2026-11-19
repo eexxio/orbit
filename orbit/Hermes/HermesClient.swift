@@ -7,6 +7,9 @@ import Observation
 //   • GET  /                           – an open dashboard's page carries its session token
 //   • GET  /api/profiles/active        – `{current}` profile name
 //   • GET  /api/sessions               – session list
+//   • GET  /api/sessions/{key}/mutation-snapshot – mutation revision/generation
+//   • PATCH /api/sessions/{key}         – title or pinned, profile and mutation identity
+//   • DELETE /api/sessions/{key}        – profile and mutation identity in query
 //   • GET  /api/sessions/{key}/messages – transcript
 //   • GET  /api/profiles/{name}/soul   – `{content, exists}`: the profile's SOUL.md
 //   • PUT  /api/profiles/{name}/soul   – `{content}` replaces SOUL.md
@@ -36,6 +39,10 @@ final class HermesClient {
     private(set) var serverVersion: String?
     private(set) var profile = "default"
     private(set) var sessions: [HermesSession] = []
+    private(set) var replyingKeys: Set<String> = []
+    private(set) var pendingSessionKeys: Set<String> = []
+    @ObservationIgnored private var pendingDeletes: Set<String> = []
+    @ObservationIgnored private var localActivity: [String: Double] = [:]
 
     @ObservationIgnored private(set) var cache: ConversationCache
     @ObservationIgnored private var prefetchTask: Task<Void, Never>?
@@ -156,6 +163,100 @@ final class HermesClient {
 
     // MARK: Live chats
 
+    func setReplying(_ key: String, _ replying: Bool) {
+        if replying { replyingKeys.insert(key) } else { replyingKeys.remove(key) }
+    }
+
+    func bumpSession(_ key: String) {
+        let now = Date().timeIntervalSince1970
+        localActivity[key] = now
+        if let index = sessions.firstIndex(where: { $0.id == key }) {
+            sessions[index].lastActive = now
+            cache.store(sessions: sessions)
+        }
+    }
+
+    func renameSession(_ chat: HermesSession, title: String) async throws {
+        try await mutateSession(chat, fields: ["title": .string(title)])
+    }
+
+    func setPinned(_ chat: HermesSession, _ pinned: Bool) async throws {
+        try await mutateSession(chat, fields: ["pinned": .bool(pinned)])
+    }
+
+    func deleteSession(_ chat: HermesSession) async throws {
+        try await mutateSession(chat, fields: nil)
+    }
+
+    private func mutateSession(_ chat: HermesSession, fields: [String: JSON]?) async throws {
+        guard !pendingSessionKeys.contains(chat.id) else { return }
+        let original = sessions.first { $0.id == chat.id } ?? chat
+        pendingSessionKeys.insert(chat.id)
+        if let fields, let index = sessions.firstIndex(where: { $0.id == chat.id }) {
+            if let title = fields["title"]?.text { sessions[index].title = title }
+            if let pinned = fields["pinned"]?.flag { sessions[index].pinned = pinned }
+        } else if fields == nil {
+            pendingDeletes.insert(chat.id)
+            sessions.removeAll { $0.id == chat.id }
+        }
+        cache.store(sessions: sessions)
+        defer {
+            pendingSessionKeys.remove(chat.id)
+            pendingDeletes.remove(chat.id)
+        }
+        do {
+            try await ensureSignedIn()
+            guard let base = baseURL else { throw HermesError.notConfigured }
+            let path = "api/sessions/\(chat.id)"
+            var snapshotRequest = request(base, path + "/mutation-snapshot", query: ["profile": profile])
+            let (snapshotData, snapshotResponse) = try await authorizedRaw(&snapshotRequest)
+            var identity: [String: JSON] = ["profile": .string(profile)]
+            if ![404, 405].contains(snapshotResponse.statusCode) {
+                guard (200..<300).contains(snapshotResponse.statusCode) else {
+                    throw HermesError.http(snapshotResponse.statusCode, nil)
+                }
+                let snapshot = JSON.decode(snapshotData) ?? .null
+                guard let revision = snapshot["runtime_revision"].double,
+                      let generation = snapshot["runtime_generation"].double else { throw HermesError.unsupported }
+                identity["request_id"] = .string(UUID().uuidString)
+                identity["expected_revision"] = .number(revision)
+                identity["expected_generation"] = .number(generation)
+            }
+            var query: [String: String] = [:]
+            if fields == nil {
+                for (key, value) in identity {
+                    if let text = value.text { query[key] = text }
+                    else if let number = value.double { query[key] = String(Int(number)) }
+                }
+            }
+            var body = identity
+            fields?.forEach { body[$0.key] = $0.value }
+            var req = request(base, path, method: fields == nil ? "DELETE" : "PATCH",
+                              body: fields == nil ? nil : .object(body), query: query)
+            let (data, response) = try await authorizedRaw(&req)
+            let json = JSON.decode(data) ?? .null
+            let absent = fields == nil && response.statusCode == 404 &&
+                (json["already_absent"].flag == true || json["detail"].text == "already_absent")
+            if !absent {
+                if [404, 405].contains(response.statusCode) { throw HermesError.sessionManagementUnsupported }
+                guard (200..<300).contains(response.statusCode) else {
+                    throw HermesError.http(response.statusCode, json["detail"].text)
+                }
+            }
+            if fields == nil {
+                liveChats[chat.id]?.shutDown()
+                liveChats[chat.id] = nil
+                replyingKeys.remove(chat.id)
+                cache.removeSession(chat.id)
+            }
+        } catch {
+            sessions.removeAll { $0.id == chat.id }
+            sessions.append(original)
+            cache.store(sessions: sessions)
+            throw error
+        }
+    }
+
     /// The chat already running for this key, or a fresh one that loads its history.
     func liveChat(for key: String?) -> LiveChat {
         if let key, let live = liveChats[key] { return live }
@@ -169,6 +270,8 @@ final class HermesClient {
     }
 
     private func shutDownLiveChats() {
+        replyingKeys = []
+        localActivity = [:]
         let chats = liveChats.values
         liveChats = [:]
         chats.forEach { $0.shutDown() }
@@ -183,15 +286,24 @@ final class HermesClient {
                 "profile": profile, "order": "recent", "archived": "exclude", "limit": "100", "offset": "0",
                 "min_messages": "1", "exclude_sources": "cron,kanban,oneshot,subagent,tool"
             ])
-            sessions = (json["sessions"].list ?? []).compactMap { row in
+            let local = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+            var fresh: [HermesSession] = (json["sessions"].list ?? []).compactMap { row in
                 // A row can be wrapped (`{session: {...}}`) on some releases.
                 let r = row["id"].text != nil ? row : row["session"]
                 guard let id = r["id"].text, !id.isEmpty, r["hidden"].flag != true else { return nil }
                 let title = r["title"].text.flatMap { $0.isEmpty ? nil : $0 }
                     ?? r["preview"].text.flatMap { $0.isEmpty ? nil : String($0.prefix(60)) }
                     ?? "New chat"
-                return HermesSession(id: id, title: title, lastActive: r["last_active"].double)
+                guard !pendingDeletes.contains(id) else { return nil }
+                if pendingSessionKeys.contains(id), let chat = local[id] { return chat }
+                let activity = max(r["last_active"].double ?? 0, localActivity[id] ?? 0)
+                return HermesSession(id: id, title: title, lastActive: activity == 0 ? nil : activity,
+                                     pinned: r["pinned"].flag ?? false)
             }
+            for chat in sessions where pendingSessionKeys.contains(chat.id) && !fresh.contains(where: { $0.id == chat.id }) {
+                fresh.append(chat)
+            }
+            sessions = fresh
             cache.store(sessions: sessions)
             prefetchRecent()
         } catch {

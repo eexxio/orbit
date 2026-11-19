@@ -2,8 +2,24 @@ import Foundation
 
 struct HermesSession: Identifiable, Hashable, Codable, Sendable {
     let id: String
-    let title: String
-    let lastActive: Double?
+    var title: String
+    var lastActive: Double?
+    var pinned: Bool = false
+
+    init(id: String, title: String, lastActive: Double?, pinned: Bool = false) {
+        self.id = id
+        self.title = title
+        self.lastActive = lastActive
+        self.pinned = pinned
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        lastActive = try values.decodeIfPresent(Double.self, forKey: .lastActive)
+        pinned = try values.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+    }
 }
 
 /// One transcript item. `role` is "user" or "assistant" for chat text, "reasoning" for the

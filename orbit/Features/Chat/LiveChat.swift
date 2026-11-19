@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// One open chat's transcript, its gateway conversation, and the turn streaming into it.
 ///
@@ -19,6 +20,16 @@ final class LiveChat {
     private(set) var key: String?
     var messages: [ChatMessage] = []
     private(set) var replyState: ReplyState = .idle
+    private(set) var canRewind = false
+    private(set) var historyIsFresh: Bool
+    private(set) var rewindCount = 0
+    private(set) var rewindFailureCount = 0
+    var isIdle: Bool { !isGenerating && !isLoadingHistory && historyIsFresh }
+    var lastUserID: UUID? { messages.last(where: \.isUser)?.id }
+    var lastReplyToolCount: Int {
+        guard let index = messages.lastIndex(where: \.isUser) else { return 0 }
+        return messages.suffix(from: index + 1).filter { $0.tool != nil }.count
+    }
     var isGenerating: Bool { replyState.isActive }
     /// True while an existing chat's history loads and nothing is cached to show.
     private(set) var isLoadingHistory = false
@@ -37,8 +48,12 @@ final class LiveChat {
     @ObservationIgnored private var conversation: HermesConversation?
     @ObservationIgnored private var latestPromptID: UUID?
     @ObservationIgnored private var pendingInterrupt: Task<Void, Never>?
+    @ObservationIgnored private var isRewinding = false
 
-    init(key: String?) { self.key = key }
+    init(key: String?) {
+        self.key = key
+        historyIsFresh = key == nil
+    }
 
     func loadHistory() async {
         guard !loadedHistory else { return }
@@ -56,11 +71,14 @@ final class LiveChat {
 
         do {
             let fresh = try await client.messages(for: key)
+            historyIsFresh = true
             // Don't clobber a turn the user started while this loaded.
             guard latestPromptID == nil else { return }
             if fresh != messages.map(\.item) {
                 messages = fresh.map(ChatMessage.init)
             }
+            let chat = conversation ?? makeConversation()
+            try? await chat.prepare()
         } catch {
             // Offline with a cached copy: keep showing it.
             if messages.isEmpty {
@@ -107,6 +125,43 @@ final class LiveChat {
         }
     }
 
+    func regenerate() async {
+        guard let prompt = messages.last(where: \.isUser)?.text else { return }
+        _ = await resendEdited(prompt)
+    }
+
+    @discardableResult
+    func resendEdited(_ text: String) async -> Bool {
+        guard isIdle, canRewind, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let index = messages.lastIndex(where: \.isUser) else { return false }
+        let promptID = messages[index].id
+        let chat = conversation ?? makeConversation()
+        replyState = .waiting
+        rewindCount += 1
+        isRewinding = true
+        defer { isRewinding = false }
+        if let key { HermesClient.shared.keepLive(self, as: key) }
+        do {
+            try await chat.rewindLastTurn()
+            guard conversation === chat, isGenerating, messages.indices.contains(index),
+                  messages[index].id == promptID else { return false }
+            withAnimation(.snappy(duration: 0.25)) { messages.removeSubrange(index...) }
+            replyState = .idle
+            send(text)
+            return true
+        } catch {
+            guard conversation === chat, isGenerating else { return false }
+            rewindFailureCount += 1
+            finishTurn(as: .failed("Couldn't regenerate: \(error.localizedDescription)"))
+            return false
+        }
+    }
+
+    func retry() async {
+        guard isIdle, let prompt = messages.last(where: \.isUser)?.text else { return }
+        if canRewind { await regenerate() } else { send(prompt) }
+    }
+
     /// A new chat learns its key from the host; from then on reopening it from the list finds this object.
     private func adoptKey(_ stored: String?) {
         guard key == nil, let stored else { return }
@@ -124,6 +179,7 @@ final class LiveChat {
 
     /// Ends the turn without waiting for the host, for a sign-out or a server change.
     func shutDown() {
+        historyIsFresh = false
         conversation?.close()
         conversation = nil
         if isGenerating { finishTurn(as: .idle) }
@@ -131,6 +187,7 @@ final class LiveChat {
 
     private func makeConversation() -> HermesConversation {
         let chat = HermesConversation(storedKey: key)
+        chat.onRewindSupport = { [weak self] supported in self?.canRewind = supported }
         // `[weak self]` throughout: the conversation is owned by this object.
         chat.onDelta = { [weak self] delta in
             guard let self, isGenerating, pendingInterrupt == nil else { return }
@@ -207,7 +264,7 @@ final class LiveChat {
             finishTurn(as: .failed(message))
         }
         chat.onDisconnect = { [weak self] in
-            guard let self, pendingInterrupt == nil else { return }
+            guard let self, pendingInterrupt == nil, !isRewinding else { return }
             finishTurn(as: .interrupted(HermesError.socketClosed.localizedDescription))
         }
         conversation = chat

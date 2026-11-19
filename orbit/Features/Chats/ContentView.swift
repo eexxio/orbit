@@ -8,9 +8,25 @@ struct ContentView: View {
 
     @State private var startNewChat = false
 
+    /// Decided once at launch, not observed, so typing an address never closes onboarding mid-step.
+    @State private var onboardingAtLaunch = !HermesClient.shared.isConfigured
+    @State private var showSetup = false
+
     private var client: HermesClient { HermesClient.shared }
 
     var body: some View {
+        if onboardingAtLaunch {
+            // The first frame on a fresh install, so it's shown in place rather than animated in as a cover.
+            OnboardingView { startChat in
+                startNewChat = startChat
+                onboardingAtLaunch = false
+            }
+        } else {
+            chats
+        }
+    }
+
+    private var chats: some View {
 
         NavigationStack {
 
@@ -27,6 +43,9 @@ struct ContentView: View {
                             .navigationBarTitleDisplayMode(.inline)
                     }
                 }
+            }
+            .overlay {
+                if !client.isConfigured { noServer }
             }
             .navigationTitle("Chats")
             .navigationBarTitleDisplayMode(.large)
@@ -57,6 +76,7 @@ struct ContentView: View {
                     }
                     .accessibilityLabel("New chat")
                     .accessibilityIdentifier("chats.new")
+                    .disabled(!client.isConfigured)
                 }
             }
             .navigationDestination(isPresented: $startNewChat) {
@@ -73,12 +93,40 @@ struct ContentView: View {
                     Task { await client.refreshSessions() }
                 }
             }
+            .fullScreenCover(isPresented: $showSetup) {
+                OnboardingView(startingAt: .connect) { startChat in
+                    startNewChat = startChat
+                    showSetup = false
+                }
+                .interactiveDismissDisabled()
+            }
             .sheet(isPresented: $showSettings) {
 
                 SettingsView()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
+        }
+    }
+
+    private var noServer: some View {
+        ContentUnavailableView {
+            Label {
+                Text("No server yet")
+            } icon: {
+                Image("Lockup")
+                    .resizable()
+                    .interpolation(.none)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 29 * 3)
+                    .accessibilityHidden(true)
+            }
+        } description: {
+            Text("Connect orbit to your Hermes dashboard to see your chats.")
+        } actions: {
+            Button("Set up") { showSetup = true }
+                .buttonStyle(.glassProminent)
+                .accessibilityIdentifier("chats.empty.setup")
         }
     }
 }

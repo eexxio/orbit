@@ -2,7 +2,7 @@ import Foundation
 
 enum HermesError: LocalizedError {
     case notConfigured, invalidAddress, notDashboard, wrongPassword, browserOnly
-    case http(Int, String?), unsupported, socketClosed, server(String)
+    case http(Int, String?), unsupported, socketClosed, server(String), unreachable(String)
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +15,7 @@ enum HermesError: LocalizedError {
         case .unsupported: return "The server sent a reply this app doesn't understand."
         case .socketClosed: return "The connection to the server was lost."
         case .server(let message): return message
+        case .unreachable(let host): return "Couldn't reach \(host). Check the address and that `hermes dashboard` is running."
         }
     }
 }

@@ -18,3 +18,7 @@ xcodebuild -project orbit.xcodeproj -scheme orbit \
 The tests use the app's normal REST sign-in and JSON-RPC WebSocket path. They
 advance the fixture after observing each UI state, rather than relying on
 fixed streaming delays. Screenshots are attached to the test result bundle.
+
+Onboarding tests use fixture IDs that start with `locked-` (a dashboard that
+requires sign-in and rejects every password) and `blocked-` (every request
+answered 403, as Cloudflare Access does).

@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Stop a generating reply from the composer, keeping partial text and your next draft with a quiet Stopped status.
 - Connect to a Hermes Agent dashboard: open, username/password, and Cloudflare Access sign-in.
 - Chat list with search, and new chats.
 - Streaming chat over the Hermes gateway WebSocket, with Markdown-rendered replies.
@@ -32,3 +33,4 @@ All notable changes to this project are documented here. The format follows
 - Chat shows when a reply is streaming, interrupted, or failed, preserves any partial text, and lets you send again after the turn ends.
 - Leaving a chat while the agent is replying no longer drops the reply: it keeps streaming, and reopening the chat shows the thinking and the reply as they arrive.
 - A conversation now reads up from the composer: opening a chat lands on its newest message, and a chat too short to fill the screen sits just above the input field instead of hanging from the navigation bar.
+- New chat opens a blank conversation after a completed, interrupted, or failed reply instead of reopening the previous transcript.

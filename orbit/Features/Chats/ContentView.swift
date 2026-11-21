@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var showSettings = false
 
     @State private var startNewChat = false
+    @State private var newChatID = UUID()
 
     /// Decided once at launch, not observed, so typing an address never closes onboarding mid-step.
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
@@ -71,6 +72,7 @@ struct ContentView: View {
                 ToolbarItem(placement: .bottomBar) {
 
                     Button {
+                        newChatID = UUID()
                         startNewChat = true
                     } label: {
                         Image(systemName: "square.and.pencil")
@@ -82,6 +84,7 @@ struct ContentView: View {
             }
             .navigationDestination(isPresented: $startNewChat) {
                 ChatInterfaceView()
+                    .id(newChatID)
                     .navigationBarTitleDisplayMode(.inline)
             }
             .task {

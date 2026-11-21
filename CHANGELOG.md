@@ -6,9 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-- New chat opens a blank conversation after a completed, interrupted, or failed reply instead of reopening the previous transcript.
-
 ### Added
 - Stop a generating reply from the composer, keeping partial text and your next draft with a quiet Stopped status.
 - Connect to a Hermes Agent dashboard: open, username/password, and Cloudflare Access sign-in.
@@ -22,6 +19,7 @@ All notable changes to this project are documented here. The format follows
 - Redesigned Settings with the orbit logo, a connection status pill, and an About section.
 - Edit the agent's SOUL.md (its personality) from Settings.
 - Choose a theme (System, Light, Dark) and an accent color for buttons, links and your chat bubbles.
+- First-launch onboarding that walks you through connecting your Hermes server and into your first chat.
 - New chats open with the message field focused and the keyboard up.
 - Each streamed reply shows its generation speed in tokens per second (estimated with ~ when the server doesn't report usage), and keeps it when you reopen the chat.
 - See the agent's thinking as a collapsible block and its tool calls as compact rows, live and in loaded chats.
@@ -35,3 +33,4 @@ All notable changes to this project are documented here. The format follows
 - Chat shows when a reply is streaming, interrupted, or failed, preserves any partial text, and lets you send again after the turn ends.
 - Leaving a chat while the agent is replying no longer drops the reply: it keeps streaming, and reopening the chat shows the thinking and the reply as they arrive.
 - A conversation now reads up from the composer: opening a chat lands on its newest message, and a chat too short to fill the screen sits just above the input field instead of hanging from the navigation bar.
+- New chat opens a blank conversation after a completed, interrupted, or failed reply instead of reopening the previous transcript.

@@ -78,9 +78,7 @@ struct SettingsView: View {
         Section("Connection") {
 
             if case .failed(let message) = client.state {
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
+                ErrorRow(message: message)
             }
 
             if client.state == .connected, let version = client.serverVersion {
@@ -184,7 +182,7 @@ struct SettingsView: View {
 }
 
 /// The optional Cloudflare Access service token, on its own page since most setups don't need it.
-private struct CloudflareAccessView: View {
+struct CloudflareAccessView: View {
 
     @Bindable private var client = HermesClient.shared
 
@@ -226,14 +224,21 @@ private struct BrandHeader: View {
                 .frame(width: 29 * 4)
                 .accessibilityLabel("orbit")
 
-            statusPill
+            ConnectionPill(state: state, host: host)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
         .padding(.bottom, 4)
     }
+}
 
-    private var statusPill: some View {
+/// The connection status as a small pill: a coloured dot (or spinner) and a one-line status.
+struct ConnectionPill: View {
+
+    let state: HermesClient.State
+    let host: String?
+
+    var body: some View {
 
         HStack(spacing: 6) {
             switch state {
@@ -272,8 +277,24 @@ private struct BrandHeader: View {
     }
 }
 
+/// A sign-in error as Settings and onboarding show it. Inline Markdown renders, so `commands` read as code.
+struct ErrorRow: View {
+
+    let message: String
+
+    var body: some View {
+        Label {
+            Text((try? AttributedString(markdown: message)) ?? AttributedString(message))
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+        }
+        .font(.footnote)
+        .foregroundStyle(.red)
+    }
+}
+
 /// A form row with a fixed-width leading symbol, so fields line up under each other.
-private struct SettingsField<Content: View>: View {
+struct SettingsField<Content: View>: View {
 
     let icon: String
     @ViewBuilder let content: Content

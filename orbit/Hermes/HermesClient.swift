@@ -76,7 +76,8 @@ final class HermesClient {
     // MARK: Connection lifecycle
 
     /// Drops any sign-in and connects again with the current settings.
-    func connect() async {
+    /// Returns the sign-in error, if any, so a caller can place it next to the field it concerns.
+    @discardableResult func connect() async -> Error? {
         shutDownLiveChats()
         signOutLocally()
         cache = ConversationCache(address: address, username: username)
@@ -84,8 +85,10 @@ final class HermesClient {
         do {
             try await ensureSignedIn()
             await refreshSessions()
+            return nil
         } catch {
             state = .failed(error.localizedDescription)
+            return error
         }
     }
 
@@ -122,6 +125,8 @@ final class HermesClient {
         state = .connecting
         do {
             let (statusData, statusResponse) = try await raw(request(base, "api/status"))
+            // Cloudflare Access answers 403 before the dashboard sees the request.
+            if statusResponse.statusCode == 403 { throw HermesError.http(403, nil) }
             guard statusResponse.statusCode == 200, let status = JSON.decode(statusData),
                   status["auth_required"].flag != nil else { throw HermesError.notDashboard }
             serverVersion = status["version"].text
@@ -149,9 +154,18 @@ final class HermesClient {
             state = .connected
         } catch {
             signedIn = false
+            let error = Self.unreachable(error, host: base.host() ?? address)
             state = .failed(error.localizedDescription)
             throw error
         }
+    }
+
+    /// Network-level failures (no route, refused, timed out) read as raw system text; name the host instead.
+    nonisolated private static func unreachable(_ error: Error, host: String) -> Error {
+        let codes: Set<URLError.Code> = [.cannotFindHost, .cannotConnectToHost, .timedOut, .dnsLookupFailed,
+                                         .notConnectedToInternet, .networkConnectionLost, .secureConnectionFailed]
+        guard let urlError = error as? URLError, codes.contains(urlError.code) else { return error }
+        return HermesError.unreachable(host)
     }
 
     // MARK: Live chats

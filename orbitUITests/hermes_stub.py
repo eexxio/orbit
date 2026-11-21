@@ -33,6 +33,13 @@ class HermesStub(BaseHTTPRequestHandler):
     def do_GET(self):
         fixture_id, _, path = urlsplit(self.path).path.lstrip("/").partition("/")
         path = "/" + path
+        if fixture_id.startswith("blocked-"):
+            self.send_error(403)
+            return
+        if path == "/api/status" and fixture_id.startswith("locked-"):
+            self.respond(json.dumps({"auth_required": True, "auth_providers": ["basic"], "version": "fixture"}).encode(),
+                         "application/json")
+            return
         if path == "/fixture/state":
             with STATS_LOCK:
                 self.respond(json.dumps(STATS[fixture_id]).encode(), "application/json")
@@ -55,6 +62,10 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path.split("/")
+        if path[-2:] == ["auth", "password-login"]:
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_error(401)
+            return
         if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end", "interrupted"}:
             self.send_error(404)
             return

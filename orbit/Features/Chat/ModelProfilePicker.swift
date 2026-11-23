@@ -13,13 +13,8 @@ struct ChatModelTitle: View {
     private var regular: Bool { width == .regular }
     private var usePopover: Bool { regular && typeSize < .accessibility3 }
     private var fullModel: String? {
-        chat.selectedModel?.name ?? chat.currentModel
-            ?? (chat.isDraft ? draftDefault : nil)
-    }
-    private var draftDefault: String? {
-        let client = HermesClient.shared
-        return client.modelCatalogs[chat.profile]?.currentModel
-            ?? client.profiles.first { $0.name == chat.profile }?.model
+        chat.currentModel ?? chat.selectedModel?.name
+            ?? (chat.key == nil ? chat.profileDefaultModel : nil)
     }
     private var showProfile: Bool { HermesClient.shared.profiles.count != 1 }
 
@@ -117,12 +112,8 @@ struct ModelProfilePicker: View {
     private var client: HermesClient { HermesClient.shared }
     private var modelCatalog: HermesModelCatalog? { catalog ?? client.modelCatalogs[chat.profile] }
     private var options: [HermesModelOption] { modelCatalog?.options ?? [] }
-    private var defaultModel: String? {
-        client.profiles.first { $0.name == chat.profile }?.model
-            ?? client.modelCatalogs[chat.profile]?.currentModel
-    }
     private var defaultOption: HermesModelOption? {
-        options.first { $0.name == defaultModel }
+        options.first { $0.name == chat.profileDefaultModel }
     }
     private var actionsDisabled: Bool { offline || chat.changingModel != nil || chat.isProfileGone }
 
@@ -248,7 +239,7 @@ struct ModelProfilePicker: View {
         Section {
             if search.isEmpty {
                 Button { pick(chat.isDraft ? nil : defaultOption) } label: {
-                    row("Profile default", subtitle: defaultModel, selected: chat.isDraft && chat.selectedModel == nil)
+                    row("Profile default", subtitle: chat.profileDefaultModel, selected: chat.isDraft && chat.selectedModel == nil)
                 }
                 .disabled(actionsDisabled || (!chat.isDraft && defaultOption == nil))
                 .accessibilityIdentifier("modelPicker.default")

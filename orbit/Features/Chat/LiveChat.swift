@@ -30,6 +30,11 @@ final class LiveChat {
     private(set) var failedModel: HermesModelOption?
     var modelConfirmation: HermesModelConfirmation?
     var profile: String { selectedProfile ?? HermesClient.shared.browsingProfile }
+    var profileDefaultModel: String? {
+        let client = HermesClient.shared
+        return client.profiles.first { $0.name == profile }?.model
+            ?? client.modelCatalogs[profile]?.currentModel
+    }
     var canSend: Bool { !isGenerating && pendingModel == nil && changingModel == nil && !isProfileGone }
     var isDraft: Bool { key == nil && !isGenerating && conversation == nil }
     var messages: [ChatMessage] = []

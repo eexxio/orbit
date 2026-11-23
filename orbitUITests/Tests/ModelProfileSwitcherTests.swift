@@ -37,6 +37,35 @@ final class ModelProfileSwitcherTests: XCTestCase {
         XCTAssertFalse(app.buttons["Existing chat"].exists)
     }
 
+    func testWorkProfileDefaultMatchesTitleAndFirstPrompt() async throws {
+        let app = openChat("profile", existing: false)
+        openPicker(app)
+        let work = app.buttons["profileRow.work"]
+        XCTAssertTrue(work.waitForExistence(timeout: 8))
+        work.tap()
+        XCTAssertTrue(model("work-fast", app).waitForExistence(timeout: 8))
+        let profileDefault = app.buttons["modelPicker.default"]
+        XCTAssertTrue(profileDefault.label.contains("example/work-default"))
+        snapshot("work-default-picker")
+        app.buttons["modelPicker.done"].tap()
+        XCTAssertTrue(app.navigationBars["Chat Settings"].waitForNonExistence(timeout: 5))
+
+        let title = app.buttons["chat.modelSwitcher"]
+        let draftTitle = title.label
+        snapshot("work-default-before-send")
+        send("Use profile default", app)
+        XCTAssertTrue(app.staticTexts["The next reply arrived."].waitForExistence(timeout: 10))
+        let state = try await state()
+        XCTAssertEqual(state["created_profile"], "work")
+        XCTAssertEqual(state["created_model"], "example/work-default")
+        XCTAssertEqual(state["created_provider"], "")
+        let promptModel = try XCTUnwrap(state["prompt_model"])
+        XCTAssertEqual(promptModel, "example/work-default")
+        XCTAssertEqual(title.label, "Model, \(promptModel), profile work")
+        snapshot("work-default-after-reply")
+        XCTAssertEqual(draftTitle, title.label, "The draft title must match the model used for the first prompt.")
+    }
+
     func testExistingChatCanStartAnotherProfileWithoutMovingHistory() async throws {
         let app = openChat("canonical", existing: true)
         openPicker(app)

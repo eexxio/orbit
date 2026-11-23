@@ -8,6 +8,8 @@ struct ContentView: View {
 
     @State private var startNewChat = false
     @State private var newChatID = UUID()
+    /// A chat opened from its Live Activity.
+    @State private var openedChat: String?
 
     private var client: HermesClient { HermesClient.shared }
 
@@ -45,6 +47,8 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "gearshape")
                     }
+                    .accessibilityLabel("Settings")
+                    .accessibilityIdentifier("chats.settings")
                 }
 
                 ToolbarSpacer(.flexible, placement: .bottomBar)
@@ -65,6 +69,16 @@ struct ContentView: View {
                 ChatInterfaceView()
                     .id(newChatID)
                     .navigationBarTitleDisplayMode(.inline)
+            }
+            .navigationDestination(item: $openedChat) { key in
+                ChatInterfaceView(sessionKey: key)
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+            .onOpenURL { url in
+                guard url.scheme == "orbit", url.host() == "chat",
+                      let key = ReplyActivities.shared.sessionKey(for: url.lastPathComponent) else { return }
+                showSettings = false
+                openedChat = key
             }
             .task {
                 if client.isConfigured, client.state == .disconnected {

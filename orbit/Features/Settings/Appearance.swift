@@ -6,6 +6,7 @@ enum AppearanceKey {
     static let theme = "hermes.theme"
     /// Whether chats show the agent's tool calls as rows.
     static let showToolCalls = "hermes.showToolCalls"
+    static let liveActivities = "hermes.liveActivities"
 }
 
 /// The tint for buttons, links and your own chat bubbles. `mono` follows the grayscale brand.

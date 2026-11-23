@@ -6,6 +6,8 @@ final class HermesConversation {
     /// The stored session key, once the host has one.
     private(set) var storedKey: String?
     private var runtimeID: String?
+    /// The run id a fencing host stamps on `message.start`, sent back with Stop.
+    private var executionGeneration: JSON?
     private var acceptsReplyEvents = true
     private var socket: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
@@ -31,6 +33,9 @@ final class HermesConversation {
 
     init(storedKey: String?) { self.storedKey = storedKey }
 
+    /// Whether the socket and its runtime session are up.
+    var isOpen: Bool { socket != nil && runtimeID != nil }
+
     func close() {
         connectionID = UUID()
         reader?.cancel(); heartbeat?.cancel()
@@ -45,6 +50,7 @@ final class HermesConversation {
         if socket == nil || runtimeID == nil { try await open() }
         guard let runtimeID else { throw HermesError.unsupported }
         acceptsReplyEvents = true
+        executionGeneration = nil
         _ = try await call("prompt.submit", ["session_id": .string(runtimeID), "text": .string(text), "queued": .bool(true)])
     }
 
@@ -52,7 +58,10 @@ final class HermesConversation {
         acceptsReplyEvents = false
         guard let runtimeID else { return false }
         do {
-            _ = try await call("session.interrupt", ["session_id": .string(runtimeID)], timeout: timeout)
+            var params: [String: JSON] = ["session_id": .string(runtimeID)]
+            // Hosts that fence runs refuse a stale generation instead of stopping a newer turn.
+            if let executionGeneration { params["execution_generation"] = executionGeneration }
+            _ = try await call("session.interrupt", params, timeout: timeout)
             return true
         } catch {
             return false
@@ -170,6 +179,11 @@ final class HermesConversation {
         guard acceptsReplyEvents || ["session.info", "session.title"].contains(event["type"].text ?? "") else { return }
         let payload = event["payload"]
         switch event["type"].text ?? "" {
+        case "message.start":
+            for generation in [event["execution_generation"], payload["execution_generation"]] where generation != .null {
+                executionGeneration = generation
+                break
+            }
         case "message.delta":
             if let text = payload["text"].text, !text.isEmpty { onDelta?(text) }
         case "message.interim":

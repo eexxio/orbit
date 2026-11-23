@@ -10,6 +10,7 @@ All notable changes to this project are documented here. The format follows
 - New chat opens a blank conversation after a completed, interrupted, or failed reply instead of reopening the previous transcript.
 
 ### Added
+- Optional Live Activity for replies that run longer than 20 seconds: phase and elapsed time on the Lock Screen and in the Dynamic Island, with Stop while orbit holds the reply's live connection and Open chat otherwise. Off by default (Settings > Live Activities).
 - Stop a generating reply from the composer, keeping partial text and your next draft with a quiet Stopped status.
 - Connect to a Hermes Agent dashboard: open, username/password, and Cloudflare Access sign-in.
 - Chat list with search, and new chats.

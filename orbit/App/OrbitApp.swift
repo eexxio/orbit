@@ -4,6 +4,7 @@ import SwiftUI
 
     @AppStorage(AppearanceKey.accent) private var accent = Accent.mono
     @AppStorage(AppearanceKey.theme) private var theme = Theme.system
+    @Environment(\.scenePhase) private var scenePhase
 
     init() { ReplyActivities.shared.endLeftovers() }
 
@@ -12,6 +13,9 @@ import SwiftUI
             ContentView()
                 .tint(accent.color)
                 .preferredColorScheme(theme.colorScheme)
+                .onChange(of: scenePhase) {
+                    if scenePhase == .active { ReplyActivities.shared.appBecameActive() }
+                }
         }
     }
 }

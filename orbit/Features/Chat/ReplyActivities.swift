@@ -21,6 +21,8 @@ final class ReplyActivities {
     private var pending: [ObjectIdentifier: Task<Void, Never>] = [:]
     private var refresher: Task<Void, Never>?
     private var shown: State?
+    /// When the card last got fresh content; past its stale date it can't be trusted.
+    private var updatedAt = Date.distantPast
     private var rateShownAt = Date.distantPast
     private var stopping = false
 
@@ -156,7 +158,17 @@ final class ReplyActivities {
     }
 
     private func content(_ state: State) -> ActivityContent<State> {
-        ActivityContent(state: state, staleDate: .now + 45)
+        updatedAt = .now
+        return ActivityContent(state: state, staleDate: .now + Self.staleAfter)
+    }
+
+    private static let staleAfter: TimeInterval = 45
+
+    /// Back in the foreground after iOS suspended orbit: a card that went stale ends,
+    /// since the app missed whatever happened and the chat shows the truth.
+    func appBecameActive() {
+        guard activity != nil, Date.now.timeIntervalSince(updatedAt) >= Self.staleAfter else { return }
+        endAll()
     }
 
     private func state(for chat: LiveChat) -> State {

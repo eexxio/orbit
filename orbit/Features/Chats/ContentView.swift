@@ -47,6 +47,8 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "gearshape")
                     }
+                    .accessibilityLabel("Settings")
+                    .accessibilityIdentifier("chats.settings")
                 }
 
                 ToolbarSpacer(.flexible, placement: .bottomBar)

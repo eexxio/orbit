@@ -14,7 +14,7 @@ GATES = defaultdict(threading.Event)
 STATS_LOCK = threading.Lock()
 STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
 PARTIAL = "Here is the first part"
-LONG_TOOL_SECONDS = 6
+LONG_TOOL_SECONDS = 20
 SCENARIOS = {
     "Complete the reply": "complete",
     "Close the connection": "disconnect",

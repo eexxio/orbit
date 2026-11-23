@@ -8,7 +8,8 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
     private(set) var speakingID: UUID?
     private(set) var failedID: UUID?
     private var utteranceID: ObjectIdentifier?
-    private var didStartUtterance = false
+    private var hasSpeechProgress = false
+    private var ownsAudioSession = false
     @ObservationIgnored private var playbackWatchdog: Task<Void, Never>?
     private let synthesizer = AVSpeechSynthesizer()
 
@@ -23,8 +24,10 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
         let text = ReplySpeechText.render(text)
         guard !text.isEmpty else { return }
         #if DEBUG && targetEnvironment(simulator)
-        if ProcessInfo.processInfo.arguments.contains("-orbitStallReadAloud") {
-            beginPlayback(id)
+        if ProcessInfo.processInfo.arguments.contains("-orbitStallReadAloudAfterStart") {
+            let utterance = AVSpeechUtterance(string: text)
+            beginPlayback(id, utterance: utterance)
+            synthesizer.delegate?.speechSynthesizer?(synthesizer, didStart: utterance)
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-orbitFakeReadAloud") {
@@ -37,6 +40,7 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
             try session.setCategory(.playback, mode: .spokenAudio,
                                     options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
             try session.setActive(true)
+            ownsAudioSession = true
         } catch {
             failPlayback(id)
             return
@@ -45,8 +49,7 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: AVSpeechSynthesisVoice.currentLanguageCode())
         utterance.prefersAssistiveTechnologySettings = true
-        utteranceID = ObjectIdentifier(utterance)
-        beginPlayback(id)
+        beginPlayback(id, utterance: utterance)
         synthesizer.speak(utterance)
     }
 
@@ -54,17 +57,18 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
         guard speakingID != nil else { return }
         playbackWatchdog?.cancel()
         playbackWatchdog = nil
-        let realSpeech = utteranceID != nil
         utteranceID = nil
-        didStartUtterance = false
+        hasSpeechProgress = false
         speakingID = nil
-        if realSpeech {
+        if ownsAudioSession {
+            ownsAudioSession = false
             synthesizer.stopSpeaking(at: .immediate)
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
     }
 
-    private func beginPlayback(_ id: UUID) {
+    private func beginPlayback(_ id: UUID, utterance: AVSpeechUtterance) {
+        utteranceID = ObjectIdentifier(utterance)
         speakingID = id
         watchPlayback(id, timeout: .seconds(3))
     }
@@ -83,19 +87,13 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
         failedID = id
     }
 
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-        didMakeProgress(ObjectIdentifier(utterance))
-    }
-
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
                                        willSpeakRangeOfSpeechString characterRange: NSRange, utterance: AVSpeechUtterance) {
-        didMakeProgress(ObjectIdentifier(utterance))
-    }
-
-    nonisolated private func didMakeProgress(_ id: ObjectIdentifier) {
+        guard characterRange.length > 0 else { return }
+        let id = ObjectIdentifier(utterance)
         Task { @MainActor in
             guard utteranceID == id, let speakingID else { return }
-            didStartUtterance = true
+            hasSpeechProgress = true
             watchPlayback(speakingID, timeout: .seconds(15))
         }
     }
@@ -111,7 +109,7 @@ final class ReplySpeaker: NSObject, AVSpeechSynthesizerDelegate {
     nonisolated private func didEnd(_ id: ObjectIdentifier, cancelled: Bool) {
         Task { @MainActor in
             guard utteranceID == id, let speakingID else { return }
-            if cancelled || !didStartUtterance {
+            if cancelled || !hasSpeechProgress {
                 failPlayback(speakingID)
             } else {
                 stop()

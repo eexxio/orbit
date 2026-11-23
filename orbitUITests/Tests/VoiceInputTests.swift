@@ -50,8 +50,8 @@ final class VoiceInputTests: XCTestCase {
     }
 
     @MainActor
-    func testStalledReadAloudResetsButtonAndShowsAnInlineNotice() {
-        let app = launch(stallReadAloud: true)
+    func testReadAloudWithoutSpeechProgressTimesOutPromptly() {
+        let app = launch(stallReadAloudAfterStart: true)
         let newChat = app.buttons["chats.new"]
         XCTAssertTrue(newChat.waitForExistence(timeout: 10))
         newChat.tap()
@@ -64,14 +64,16 @@ final class VoiceInputTests: XCTestCase {
 
         let speak = app.buttons["chat.reply.speak"]
         XCTAssertTrue(speak.waitForExistence(timeout: 10))
-        XCTAssertFalse(app.staticTexts["chat.reply.speak.error"].exists)
-        speak.tap()
-        XCTAssertEqual(speak.label, "Stop reading")
-
         let notice = app.staticTexts["chat.reply.speak.error"]
-        XCTAssertTrue(notice.waitForExistence(timeout: 8))
-        XCTAssertEqual(notice.label, "Couldn’t read this reply aloud.")
-        XCTAssertEqual(speak.label, "Read reply aloud")
+        XCTAssertFalse(notice.exists)
+        for _ in 0..<2 {
+            speak.tap()
+            XCTAssertEqual(speak.label, "Stop reading")
+            XCTAssertFalse(notice.exists)
+            XCTAssertTrue(notice.waitForExistence(timeout: 4))
+            XCTAssertEqual(notice.label, "Couldn’t read this reply aloud.")
+            XCTAssertEqual(speak.label, "Read reply aloud")
+        }
         screenshot("voice-reply-reading-error")
     }
 
@@ -101,13 +103,13 @@ final class VoiceInputTests: XCTestCase {
     }
 
     @MainActor
-    private func launch(readAloud: String? = nil, stallReadAloud: Bool = false) -> XCUIApplication {
+    private func launch(readAloud: String? = nil, stallReadAloudAfterStart: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = [
             "-hermes.address", address, "-AppleLanguages", "(en)", "-AppleLocale", "en_US",
             "-orbitFakeDictation", "after reconnecting",
-            stallReadAloud ? "-orbitStallReadAloud" : "-orbitFakeReadAloud",
+            stallReadAloudAfterStart ? "-orbitStallReadAloudAfterStart" : "-orbitFakeReadAloud",
         ]
         if let readAloud { app.launchArguments += ["-hermes.readAloud", readAloud] }
         app.launch()

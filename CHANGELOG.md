@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Expanding or collapsing an older Thought keeps it in view instead of jumping to the newest reply. With Reduce Motion on, a Thought opens and closes without animating.
 - New chat opens a blank conversation after a completed, interrupted, or failed reply instead of reopening the previous transcript.
 
 ### Added

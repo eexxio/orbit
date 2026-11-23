@@ -129,14 +129,20 @@ struct ChatInterfaceView: View {
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .scrollDismissesKeyboard(.interactively)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("chat.transcript")
             .scrollPosition($scrollPosition)
             // The rows of a lazy stack report their real height a frame or two after they
             // appear, and the keyboard (or a taller composer) grows the bottom inset. Both
             // push the newest message below the composer unless the view follows them down.
+            // Only follow growth when the reader was already near the newest message.
             .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { old, new in
                 let grewContent = new.contentSize.height > old.contentSize.height + 0.5
                 let grewInset = new.contentInsets.bottom > old.contentInsets.bottom + 0.5
                 guard grewContent || grewInset else { return }
+                let wasAtBottom = old.contentOffset.y + old.containerSize.height
+                    >= old.contentSize.height + old.contentInsets.bottom - 24
+                guard wasAtBottom else { return }
                 pinToBottom()
             }
             .onAppear { pinToBottom() }

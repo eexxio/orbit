@@ -6,6 +6,42 @@ final class ChatStreamingTests: XCTestCase {
     private let partial = "Here is the first part"
 
     @MainActor
+    func testOlderThoughtExpansionKeepsItsPlace() async throws {
+        let app = launchChat()
+        send("Long finished chat", in: app)
+        try await advance("long", to: "delta")
+        let streaming = app.staticTexts["chat.reply.streaming"]
+        XCTAssertTrue(streaming.waitForExistence(timeout: 10))
+        XCTAssertTrue(streaming.isHittable, "Streaming follows the newest line")
+        try await advance("long", to: "end")
+        let bottom = app.buttons["chat.reply.completed"]
+        XCTAssertTrue(bottom.waitForExistence(timeout: 10))
+        XCTAssertTrue(bottom.isHittable)
+        let transcript = app.scrollViews["chat.transcript"]
+        let header = app.buttons["chat.thought.toggle"]
+        for _ in 0..<16 {
+            if header.exists && header.isHittable { break }
+            transcript.swipeDown()
+        }
+        XCTAssertTrue(header.isHittable)
+        header.tap()
+        let text = app.staticTexts["chat.thought.text"]
+        _ = text.waitForExistence(timeout: 3)
+        let visible = NSPredicate { _, _ in
+            text.exists && text.isHittable && app.windows.firstMatch.frame.contains(text.frame)
+        }
+        let stayedVisible = XCTWaiter.wait(for: [expectation(for: visible, evaluatedWith: nil)], timeout: 3)
+        screenshot("older-thought-expanded")
+        XCTAssertEqual(stayedVisible, .completed)
+        XCTAssertFalse(bottom.isHittable, "Expanding must not jump to the newest reply")
+        guard header.isHittable else { return }
+        header.tap()
+        XCTAssertTrue(text.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(header.isHittable)
+        screenshot("older-thought-collapsed")
+    }
+
+    @MainActor
     func testNewChatAfterCompletedReplyIsBlank() async throws {
         try await checkNewChatIsBlank(prompt: "Complete the reply", scenario: "complete", status: "completed")
     }

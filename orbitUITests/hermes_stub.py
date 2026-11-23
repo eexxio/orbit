@@ -59,7 +59,7 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path.split("/")
-        if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end", "interrupted"}:
+        if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end", "interrupted", "separator-start", "separator-dash", "separator-double-dash", "separator-middle", "separator-last"}:
             self.send_error(404)
             return
         key = (path[1], path[3], path[4])
@@ -144,9 +144,13 @@ class HermesStub(BaseHTTPRequestHandler):
         if text == "Stream a table":
             header = "| First column | Second column | Third column | Fourth column |"
             self.event("message.delta", {"text": header})
+            for phase, fragment in [("separator-start", "\n|"), ("separator-dash", " -"), ("separator-double-dash", "-"), ("separator-middle", "|-"), ("separator-last", "-|--")]:
+                if not self.wait(fixture_id, "table", phase, self.stopped):
+                    return True
+                self.event("message.delta", {"text": fragment})
             if self.wait(fixture_id, "table", "end", self.stopped):
-                ending = "\n| --- | --- | --- | --- |\n| Wide first value | Second value | Third value | Last value |"
-                self.event("message.delta", {"text": ending})
+                ending = "\n| --|--|--|--|\n| Wide first value | Second value | Third value | Last value |"
+                self.event("message.delta", {"text": "|--|\n| Wide first value | Second value | Third value | Last value |"})
                 self.event("message.complete", {"text": header + ending})
             return True
         if text == "Show empty code":

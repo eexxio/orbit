@@ -73,11 +73,16 @@ final class ChatStreamingTests: XCTestCase {
         screenshot("codeblock-long-line-unscrolled-table")
         let codeBody = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "json code block")).firstMatch
         XCTAssertTrue(codeBody.isHittable)
+        let initialCodeX = codeBody.frame.minX
         codeBody.swipeLeft()
+        XCTAssertLessThan(codeBody.frame.minX, initialCodeX - 10)
         screenshot("codeblock-long-line-scrolled")
-        let table = app.scrollViews.containing(.staticText, identifier: "First column").allElementsBoundByIndex.last
-        XCTAssertNotNil(table)
-        table?.swipeLeft()
+        let table = app.scrollViews["chat.table"].firstMatch
+        XCTAssertTrue(table.exists)
+        let column = app.staticTexts["First column"]
+        let initialX = column.frame.minX
+        table.swipeLeft()
+        XCTAssertLessThan(column.frame.minX, initialX - 10)
         screenshot("codeblock-wide-table-scrolled")
     }
 
@@ -90,6 +95,17 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["First column"].exists)
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "|")).firstMatch.exists)
         screenshot("table-streaming-header")
+        let phases = ["separator-start", "separator-dash", "separator-double-dash", "separator-middle", "separator-last"]
+        for phase in phases {
+            try await advance("table", to: phase)
+            for _ in 0..<4 {
+                try await Task.sleep(for: .milliseconds(150))
+                XCTAssertTrue(table.exists)
+                XCTAssertTrue(app.staticTexts["First column"].exists)
+                XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "|")).firstMatch.exists)
+            }
+            screenshot("table-streaming-\(phase)")
+        }
         try await advance("table", to: "end")
         XCTAssertTrue(app.buttons["chat.reply.completed"].waitForExistence(timeout: 10))
         XCTAssertTrue(table.exists)
@@ -99,7 +115,17 @@ final class ChatStreamingTests: XCTestCase {
         send("Stream a table", in: darkApp)
         XCTAssertTrue(darkApp.scrollViews["chat.table"].firstMatch.waitForExistence(timeout: 10))
         screenshot("table-streaming-header-dark")
+        for phase in phases {
+            try await advance("table", to: phase)
+            try await Task.sleep(for: .milliseconds(500))
+            XCTAssertTrue(darkApp.scrollViews["chat.table"].firstMatch.exists)
+            XCTAssertFalse(darkApp.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "|")).firstMatch.exists)
+            screenshot("table-streaming-\(phase)-dark")
+        }
         try await advance("table", to: "end")
+        XCTAssertTrue(darkApp.buttons["chat.reply.completed"].waitForExistence(timeout: 10))
+        XCTAssertTrue(darkApp.scrollViews["chat.table"].firstMatch.exists)
+        screenshot("table-streaming-completed-dark")
     }
 
     @MainActor
@@ -108,9 +134,12 @@ final class ChatStreamingTests: XCTestCase {
         send("Show code blocks", in: app)
         XCTAssertTrue(app.buttons["chat.codeblock.copy"].firstMatch.waitForExistence(timeout: 10))
         screenshot("codeblock-dark")
-        let table = app.scrollViews.containing(.staticText, identifier: "First column").allElementsBoundByIndex.last
-        XCTAssertNotNil(table)
-        table?.swipeLeft()
+        let table = app.scrollViews["chat.table"].firstMatch
+        XCTAssertTrue(table.exists)
+        let column = app.staticTexts["First column"]
+        let initialX = column.frame.minX
+        table.swipeLeft()
+        XCTAssertLessThan(column.frame.minX, initialX - 10)
         screenshot("codeblock-dark-table-scrolled")
     }
 

@@ -23,10 +23,15 @@ enum StreamingMarkdown {
                 fence = (marker, count)
             }
         }
-        let header = lines[last].trimmingCharacters(in: .whitespaces)
+        let trailing = lines[last].trimmingCharacters(in: .whitespaces)
+        let pendingDelimiter = last > 0 && !trailing.isEmpty
+            && trailing.allSatisfy { "|-: ".contains($0) }
+            && lines[last - 1].trimmingCharacters(in: .whitespaces).hasPrefix("|")
+        let headerIndex = pendingDelimiter ? last - 1 : last
+        let header = lines[headerIndex].trimmingCharacters(in: .whitespaces)
         guard fence == nil, header.hasPrefix("|"),
-              !lines[last].hasPrefix("    "), !lines[last].hasPrefix("\t"),
-              last == 0 || !lines[last - 1].trimmingCharacters(in: .whitespaces).hasPrefix("|") else {
+              !lines[headerIndex].hasPrefix("    "), !lines[headerIndex].hasPrefix("\t"),
+              headerIndex == 0 || !lines[headerIndex - 1].trimmingCharacters(in: .whitespaces).hasPrefix("|") else {
             return text
         }
         var columns = 0
@@ -46,7 +51,17 @@ enum StreamingMarkdown {
         if endsWithSeparator { columns -= 1 }
         guard columns > 0 else { return text }
         var completed = lines
-        completed.insert("|" + String(repeating: " --- |", count: columns), at: last + 1)
+        let separator = "|" + String(repeating: " --- |", count: columns)
+        if pendingDelimiter {
+            let cells = trailing.trimmingCharacters(in: CharacterSet(charactersIn: "|"))
+                .components(separatedBy: "|")
+            if cells.count == columns && cells.allSatisfy({
+                $0.trimmingCharacters(in: .whitespaces).range(of: "^:?-+:?$", options: .regularExpression) != nil
+            }) { return text }
+            completed[last] = separator
+        } else {
+            completed.insert(separator, at: last + 1)
+        }
         return completed.joined(separator: "\n")
     }
 }

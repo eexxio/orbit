@@ -53,12 +53,12 @@ struct CodeBlockView: View {
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .environment(\.layoutDirection, .leftToRight)
                     .padding(12)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("\(language ?? "") code block")
                     .accessibilityValue(code)
             }
+            .environment(\.layoutDirection, .leftToRight)
             .padding(.trailing, language == nil && !code.isEmpty ? 44 : 0)
         }
         .overlay(alignment: .topTrailing) {
@@ -77,7 +77,10 @@ struct CodeBlockView: View {
         .markdownMargin(top: 8, bottom: 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.codeblock")
-        .onDisappear { resetTask?.cancel() }
+        .onDisappear {
+            resetTask?.cancel()
+            copied = false
+        }
     }
 
     private var copyButton: some View {

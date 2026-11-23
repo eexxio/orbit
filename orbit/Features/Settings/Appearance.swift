@@ -53,6 +53,15 @@ enum Theme: String, CaseIterable, Identifiable {
 struct AccentPicker: View {
 
     @Binding var selection: Accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var selectionRing
+
+    private var reducesMotion: Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uitest-reduce-motion") { return true }
+        #endif
+        return reduceMotion
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -64,19 +73,30 @@ struct AccentPicker: View {
                         .fill(accent.color)
                         .frame(width: 26, height: 26)
                         .padding(3)
-                        .overlay {
-                            if accent == selection {
-                                Circle().strokeBorder(accent.color, lineWidth: 2)
-                            }
-                        }
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
+                .overlay {
+                    if accent == selection {
+                        if reducesMotion {
+                            Circle().strokeBorder(accent.color, lineWidth: 2)
+                                .frame(width: 32, height: 32)
+                                .transition(.opacity)
+                        } else {
+                            Circle().strokeBorder(accent.color, lineWidth: 2)
+                                .frame(width: 32, height: 32)
+                                .matchedGeometryEffect(id: "selection", in: selectionRing)
+                                .transition(.identity)
+                        }
+                    }
+                }
                 .accessibilityLabel(accent.name)
+                .accessibilityIdentifier("appearance.accent.\(accent.rawValue)")
                 .accessibilityAddTraits(accent == selection ? .isSelected : [])
             }
         }
         .padding(.vertical, 4)
+        .animation(reducesMotion ? .easeInOut(duration: 0.15) : .snappy(duration: 0.25), value: selection)
         .sensoryFeedback(.selection, trigger: selection)
     }
 }

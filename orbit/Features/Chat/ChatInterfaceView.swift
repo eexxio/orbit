@@ -200,8 +200,9 @@ struct ChatInterfaceView: View {
         } else {
             VStack(alignment: .leading, spacing: 12) {
                 // Full block-level Markdown: headings, lists, code blocks, quotes, tables.
-                Markdown(message.text)
-                    .markdownTheme(.basic)
+                Markdown(message.id == chat.streamingID && chat.replyState == .streaming
+                    ? StreamingMarkdown.completingTableHeader(in: message.text) : message.text)
+                    .markdownTheme(.orbit)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 

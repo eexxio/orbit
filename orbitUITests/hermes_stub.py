@@ -15,6 +15,10 @@ STATS_LOCK = threading.Lock()
 STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
 PARTIAL = "Here is the first part"
 SCENARIOS = {
+    "Show code blocks": "code",
+    "Stream a table": "table",
+    "Show empty code": "code-empty",
+    "Interrupt code": "code-interrupted",
     "Complete the reply": "complete",
     "Close the connection": "disconnect",
     "Fail the reply": "failure",
@@ -55,7 +59,7 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path.split("/")
-        if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end", "interrupted"}:
+        if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end", "interrupted", "separator-start", "separator-dash", "separator-double-dash", "separator-middle", "separator-last"}:
             self.send_error(404)
             return
         key = (path[1], path[3], path[4])
@@ -137,6 +141,37 @@ class HermesStub(BaseHTTPRequestHandler):
             pass
 
     def stream_reply(self, fixture_id, text):
+        if text == "Stream a table":
+            header = "| First column | Second column | Third column | Fourth column |"
+            self.event("message.delta", {"text": header})
+            for phase, fragment in [("separator-start", "\n|"), ("separator-dash", " -"), ("separator-double-dash", "-"), ("separator-middle", "|-"), ("separator-last", "-|--")]:
+                if not self.wait(fixture_id, "table", phase, self.stopped):
+                    return True
+                self.event("message.delta", {"text": fragment})
+            if self.wait(fixture_id, "table", "end", self.stopped):
+                ending = "\n| --|--|--|--|\n| Wide first value | Second value | Third value | Last value |"
+                self.event("message.delta", {"text": "|--|\n| Wide first value | Second value | Third value | Last value |"})
+                self.event("message.complete", {"text": header + ending})
+            return True
+        if text == "Show empty code":
+            self.event("message.complete", {"text": "```\n```"})
+            return True
+        if text == "Show code blocks":
+            content = ('```swift\nlet x = 1\nprint(x)\n```\n\n'
+                       '```\nunlabeled code\n```\n\n'
+                       '```json\nSTART' + '0123456789' * 20 + 'END\n```\n\n'
+                       '| First column | Second column | Third column | Fourth column |\n'
+                       '| --- | --- | --- | --- |\n'
+                       '| ' + 'Wide content ' * 8 + ' | Second value | Third value | Last value |')
+            self.event("message.complete", {"text": content})
+            return True
+        if text == "Interrupt code":
+            content = '```swift\nlet partial = 1'
+            self.event("message.delta", {"text": content})
+            if not self.wait(fixture_id, "code-interrupted", "end"):
+                return False
+            self.write_frame(8, struct.pack("!H", 1001))
+            return False
         if text == "Send after reconnecting":
             self.event("message.complete", {"text": "The next reply arrived."})
             return True

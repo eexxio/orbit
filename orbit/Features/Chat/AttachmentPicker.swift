@@ -67,6 +67,10 @@ struct AttachmentPicker: View {
         .menuOrder(.fixed)
         .accessibilityLabel("Add attachment").accessibilityHint("Photos, camera or files")
         .accessibilityIdentifier("chat.attach")
+        .onAppear { hasPasteImage = UIPasteboard.general.hasImages }
+        .onReceive(NotificationCenter.default.publisher(for: UIPasteboard.changedNotification)) { _ in
+            hasPasteImage = UIPasteboard.general.hasImages
+        }
         .simultaneousGesture(TapGesture().onEnded { hasPasteImage = UIPasteboard.general.hasImages })
     }
 

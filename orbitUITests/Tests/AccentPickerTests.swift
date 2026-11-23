@@ -32,7 +32,9 @@ final class AccentPickerTests: XCTestCase {
         XCTAssertFalse(new.isSelected)
         let mode = reduceMotion ? "crossfade" : "slide"
         screenshot("\(mode)-before")
+        Thread.sleep(forTimeInterval: 3)
         new.tap()
+        Thread.sleep(forTimeInterval: 3)
         for frame in 0..<5 {
             screenshot("\(mode)-frame-\(frame)")
             Thread.sleep(forTimeInterval: 0.03)

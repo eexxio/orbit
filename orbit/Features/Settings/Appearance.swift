@@ -73,26 +73,32 @@ struct AccentPicker: View {
                         .fill(accent.color)
                         .frame(width: 26, height: 26)
                         .padding(3)
+                        .background {
+                            if !reducesMotion {
+                                Color.clear.matchedGeometryEffect(id: accent, in: selectionRing)
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
                 .overlay {
-                    if accent == selection {
-                        if reducesMotion {
-                            Circle().strokeBorder(accent.color, lineWidth: 2)
-                                .frame(width: 32, height: 32)
-                                .transition(.opacity)
-                        } else {
-                            Circle().strokeBorder(accent.color, lineWidth: 2)
-                                .frame(width: 32, height: 32)
-                                .matchedGeometryEffect(id: "selection", in: selectionRing)
-                                .transition(.identity)
-                        }
+                    if reducesMotion, accent == selection {
+                        Circle().strokeBorder(accent.color, lineWidth: 2)
+                            .frame(width: 32, height: 32)
+                            .transition(.opacity)
                     }
                 }
                 .accessibilityLabel(accent.name)
                 .accessibilityIdentifier("appearance.accent.\(accent.rawValue)")
                 .accessibilityAddTraits(accent == selection ? .isSelected : [])
+            }
+        }
+        .overlay {
+            if !reducesMotion {
+                Circle().strokeBorder(selection.color, lineWidth: 2)
+                    .frame(width: 32, height: 32)
+                    .matchedGeometryEffect(id: selection, in: selectionRing, properties: .position, isSource: false)
+                    .allowsHitTesting(false)
             }
         }
         .padding(.vertical, 4)

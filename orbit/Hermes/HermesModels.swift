@@ -4,6 +4,54 @@ struct HermesSession: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let title: String
     let lastActive: Double?
+    let profile: String?
+    let model: String?
+}
+
+struct HermesModelOption: Identifiable, Hashable, Sendable {
+    let name: String
+    let provider: String
+    let providerName: String
+
+    var id: [String] { [provider, name] }
+    var displayName: String { name.split(separator: "/").last.map(String.init) ?? name }
+}
+
+struct HermesChatProfile: Identifiable, Sendable {
+    let name: String
+    let description: String?
+    let model: String?
+    var id: String { name }
+}
+
+struct HermesModelCatalog: Sendable {
+    let options: [HermesModelOption]
+    let currentModel: String?
+    let currentProvider: String?
+
+    init(_ response: JSON) throws {
+        guard let providers = response["providers"].list else { throw HermesError.unsupported }
+        let ordered = providers.filter { $0["is_current"].flag == true } + providers.filter { $0["is_current"].flag != true }
+        var seen = Set<[String]>()
+        options = ordered.flatMap { row -> [HermesModelOption] in
+            guard let slug = row["slug"].text, !slug.isEmpty, row["authenticated"].flag != false else { return [] }
+            let unavailable = Set(row["unavailable_models"].list?.compactMap(\.text) ?? [])
+            return (row["models"].list ?? []).compactMap { $0.text }.compactMap { name in
+                guard !name.isEmpty, !unavailable.contains(name), seen.insert([slug, name]).inserted else { return nil }
+                return HermesModelOption(name: name, provider: slug, providerName: row["name"].text ?? slug)
+            }
+        }
+        currentModel = response["model"].text.flatMap { $0.isEmpty ? nil : $0 }
+        currentProvider = response["provider"].text.flatMap { $0.isEmpty ? nil : $0 }
+    }
+}
+
+struct HermesModelConfirmation: Identifiable {
+    let option: HermesModelOption
+    let message: String
+    let token: String?
+
+    var id: [String] { option.id }
 }
 
 /// One transcript item. `role` is "user" or "assistant" for chat text, "reasoning" for the

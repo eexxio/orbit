@@ -39,7 +39,13 @@ struct ChatInterfaceView: View {
             }
             .background(Color(uiColor: .systemBackground))
             .safeAreaInset(edge: .top, spacing: 0) {
-                if let handoff, handoff.needsCheck, handoffCheck != .finished { handoffBanner(handoff) }
+                if let handoff, handoff.needsCheck, handoffCheck != .finished {
+                    if handoffCheck == .dashboard {
+                        dashboardHandoffCard(handoff)
+                    } else {
+                        handoffBanner
+                    }
+                }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 composer
@@ -61,18 +67,14 @@ struct ChatInterfaceView: View {
         .onDisappear { chat.isOnScreen = false }
     }
 
-    private func handoffBanner(_ handoff: HermesHandoffChat) -> some View {
+    private var handoffBanner: some View {
         VStack(alignment: .leading, spacing: 4) {
             switch handoffCheck {
             case .checking: Text("Checking the reply from Siri or Shortcuts…")
             case .pending: Text("The reply isn’t available yet. Refresh to check again.")
             case .unverified: Text("I couldn’t verify the reply. Check the transcript before asking again.")
-            case .finished: EmptyView()
-            case .dashboard: Text("This request needs the Hermes dashboard.")
+            case .finished, .dashboard: EmptyView()
             case .noRequest: Text("That request is no longer available.")
-            }
-            if handoffCheck == .dashboard, let url = handoff.dashboardURL {
-                Link("Open Hermes dashboard", destination: url).frame(minHeight: 44)
             }
             Button("Refresh") { refreshHandoff += 1 }
                 .frame(minHeight: 44)
@@ -83,6 +85,45 @@ struct ChatInterfaceView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(.regularMaterial)
+    }
+
+    private func dashboardHandoffCard(_ handoff: HermesHandoffChat) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Hermes needs your input", systemImage: "hand.raised")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            Text("Review the request in the Hermes dashboard.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                if let url = handoff.dashboardURL {
+                    Link(destination: url) {
+                        Text("Open Hermes dashboard").frame(minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                Button {
+                    refreshHandoff += 1
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                        .labelStyle(.iconOnly)
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .disabled(chat.isGenerating)
+            }
+            .buttonBorderShape(.roundedRectangle)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(.quaternary)
+                .allowsHitTesting(false)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Loading State

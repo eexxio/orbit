@@ -5,6 +5,7 @@ import hashlib
 import json
 import struct
 import threading
+import uuid
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -14,6 +15,7 @@ GATES = defaultdict(threading.Event)
 STATS_LOCK = threading.Lock()
 STATS = defaultdict(lambda: {"connections": 0, "prompts": 0, "interrupts": 0,
                             "closed": 0, "resumed": []})
+TRANSCRIPTS = defaultdict(list)
 SHORTCUT_CHATS = [
     {"id": "fixture-a", "title": "Venus", "profile": "default", "last_active": 1760000000},
     {"id": "fixture-b", "title": "Venus", "profile": "default", "last_active": 1760000000},
@@ -60,14 +62,22 @@ class HermesStub(BaseHTTPRequestHandler):
             if path == "/api/status" and fixture_id == "shortcut-auth":
                 data = {"auth_required": True, "auth_providers": ["browser"]}
             elif path == "/api/sessions":
-                data = {"sessions": SHORTCUT_CHATS}
+                with STATS_LOCK:
+                    created = [
+                        {"id": key, "title": rows[0]["content"], "profile": "default", "message_count": len(rows)}
+                        for (scenario, key), rows in TRANSCRIPTS.items()
+                        if scenario == fixture_id and key.startswith("ask-") and rows
+                    ]
+                data = {"sessions": SHORTCUT_CHATS + created}
             elif path.startswith("/api/sessions/"):
                 key = path.split("/")[3]
                 data = next((chat for chat in SHORTCUT_CHATS if chat["id"] == key), None)
-                if key == "fixture":
-                    data = {"id": "fixture", "title": "Ask Hermes", "profile": "default"}
+                with STATS_LOCK:
+                    rows = list(TRANSCRIPTS.get((fixture_id, key), []))
+                if key.startswith("ask-") and rows:
+                    data = {"id": key, "title": rows[0]["content"], "profile": "default", "message_count": len(rows)}
                 if data and path.endswith("/messages"):
-                    data = {"messages": []}
+                    data = {"messages": rows}
         if data is None:
             self.send_error(404)
             return
@@ -114,19 +124,23 @@ class HermesStub(BaseHTTPRequestHandler):
         self.scenario = None
         self.admission = None
         self.sequence = 0
+        shortcut = fixture_id.startswith("shortcut-")
+        stored_key = None
         with STATS_LOCK:
             STATS[fixture_id]["connections"] += 1
         try:
-            canonical = fixture_id.startswith("shortcut-") and not fixture_id.startswith("shortcut-legacy")
+            canonical = shortcut and not fixture_id.startswith("shortcut-legacy")
             self.event("gateway.ready", {"session_authority": True} if canonical else None)
             while (request := self.read_request()) is not None:
                 method = request["method"]
                 if method in {"session.create", "session.resume"}:
-                    key = request["params"].get("session_id", "fixture")
+                    stored_key = request["params"].get("session_id")
+                    if stored_key is None:
+                        stored_key = "ask-" + uuid.uuid4().hex if shortcut else "fixture"
                     if method == "session.resume":
                         with STATS_LOCK:
-                            STATS[fixture_id]["resumed"].append(key)
-                    snapshot = {"session_id": "runtime", "stored_session_id": key, "running": fixture_id == "shortcut-busy",
+                            STATS[fixture_id]["resumed"].append(stored_key)
+                    snapshot = {"session_id": "runtime", "stored_session_id": stored_key, "running": fixture_id == "shortcut-busy",
                                 "pending": [], "prompts": [], "status": "idle", "open_requests": [],
                                 "last_sequence": 0, "replay_epoch": "fixture"}
                     if fixture_id == "shortcut-approval" and method == "session.resume":
@@ -143,9 +157,13 @@ class HermesStub(BaseHTTPRequestHandler):
                         self.write_json({"jsonrpc": "2.0", "id": request["id"],
                                          "error": {"code": 4001, "message": "invalid_params"}})
                         continue
-                    self.scenario = SCENARIOS.get(request["params"]["text"])
+                    text = request["params"]["text"]
+                    self.scenario = SCENARIOS.get(text)
                     with STATS_LOCK:
                         STATS[fixture_id]["prompts"] += 1
+                        if shortcut and stored_key:
+                            rows = TRANSCRIPTS[fixture_id, stored_key]
+                            rows.append({"id": len(rows) + 1, "role": "user", "content": text})
                     if canonical:
                         self.admission = "ask-admission"
                         if fixture_id == "shortcut-no-receipt":
@@ -159,7 +177,7 @@ class HermesStub(BaseHTTPRequestHandler):
                         continue
                     else:
                         self.result(request, {"status": "streaming"})
-                    threading.Thread(target=self.reply, args=(fixture_id, request["params"]["text"]), daemon=True).start()
+                    threading.Thread(target=self.reply, args=(fixture_id, text), daemon=True).start()
                 elif method == "session.interrupt":
                     with STATS_LOCK:
                         STATS[fixture_id]["interrupts"] += 1

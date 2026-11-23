@@ -48,6 +48,9 @@ struct HermesAskOutcome {
     }
 
     var presentation: (heading: String, body: String, clipped: Bool, dialog: IntentDialog, route: HermesHandoff?, action: String) {
+        if status == .needsInput || status == .timedOut {
+            return ("", "", false, IntentDialog(message), route, route?.label ?? "")
+        }
         if status != .completed {
             return (String(localized: HermesAskStatus.caseDisplayRepresentations[status]?.title ?? "Ask Hermes"),
                     String(localized: message), false, IntentDialog(message), route, route?.label ?? "")
@@ -144,9 +147,11 @@ private struct HermesAskCard: View {
             if isPreview || (typeSize.isAccessibilitySize && bodyText.count > 200) {
                 Text("Preview").font(.caption).foregroundStyle(.secondary)
             }
-            Text(verbatim: typeSize.isAccessibilitySize && bodyText.count > 200
-                 ? String(bodyText.prefix(199)) + "…" : bodyText)
-                .lineLimit(typeSize.isAccessibilitySize ? 4 : 6)
+            if !bodyText.isEmpty {
+                Text(verbatim: typeSize.isAccessibilitySize && bodyText.count > 200
+                     ? String(bodyText.prefix(199)) + "…" : bodyText)
+                    .lineLimit(typeSize.isAccessibilitySize ? 4 : 6)
+            }
             if let routeID, !action.isEmpty {
                 Button(intent: OpenHermesHandoffIntent(routeID: routeID)) {
                     Text(verbatim: action).frame(minHeight: 44)

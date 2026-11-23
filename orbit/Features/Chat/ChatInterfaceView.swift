@@ -104,7 +104,7 @@ struct ChatInterfaceView: View {
     /// Deliberately quiet: says who you are about to talk to, then gets out of the way of the composer.
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Text("New chat")
+            Text(sessionKey == nil ? "New chat" : "No messages yet")
                 .font(.title3.weight(.semibold))
 
             HStack(spacing: 6) {

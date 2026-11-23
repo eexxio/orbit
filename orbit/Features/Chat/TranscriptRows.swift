@@ -6,11 +6,12 @@ struct ReasoningRow: View {
     /// True while this block still streams.
     let isLive: Bool
     @State private var isExpanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                withAnimation(.snappy(duration: 0.25)) { isExpanded.toggle() }
+                withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "brain")

@@ -1,4 +1,4 @@
-# Chat streaming UI tests
+# Hermes UI tests
 
 From the repository root, start the loopback Hermes fixture in one terminal:
 
@@ -18,3 +18,9 @@ xcodebuild -project orbit.xcodeproj -scheme orbit \
 The tests use the app's normal REST sign-in and JSON-RPC WebSocket path. They
 advance the fixture after observing each UI state, rather than relying on
 fixed streaming delays. Screenshots are attached to the test result bundle.
+
+`AskHermesTests` exercises the action's execution and output through a
+Debug-only probe that can reach only the loopback fixture. It checks that
+each accepted request submits once, never interrupts, and releases its
+socket; it doesn't exercise Apple's Siri or Shortcuts interface. Check
+those native surfaces separately with an installed build.

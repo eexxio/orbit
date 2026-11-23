@@ -270,8 +270,13 @@ final class ChatStreamingTests: XCTestCase {
     }
 
     private func fixtureState() async throws -> [String: Int] {
+        struct Counters: Decodable {
+            let connections: Int
+            let prompts: Int
+        }
         let (data, _) = try await URLSession.shared.data(from: URL(string: "\(address)/fixture/state")!)
-        return try JSONDecoder().decode([String: Int].self, from: data)
+        let result = try JSONDecoder().decode(Counters.self, from: data)
+        return ["connections": result.connections, "prompts": result.prompts]
     }
 
     @MainActor

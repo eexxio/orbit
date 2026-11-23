@@ -10,6 +10,7 @@ All notable changes to this project are documented here. The format follows
 - New chat opens a blank conversation after a completed, interrupted, or failed reply instead of reopening the previous transcript.
 
 ### Added
+- Ask Hermes from Siri or Shortcuts and get its reply without opening orbit.
 - Stop a generating reply from the composer, keeping partial text and your next draft with a quiet Stopped status.
 - Connect to a Hermes Agent dashboard: open, username/password, and Cloudflare Access sign-in.
 - Chat list with search, and new chats.

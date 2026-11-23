@@ -12,7 +12,12 @@ from urllib.parse import urlsplit
 
 GATES = defaultdict(threading.Event)
 STATS_LOCK = threading.Lock()
-STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
+STATS = defaultdict(lambda: {"connections": 0, "prompts": 0, "interrupts": 0,
+                            "closed": 0, "resumed": []})
+SHORTCUT_CHATS = [
+    {"id": "fixture-a", "title": "Venus", "profile": "default", "last_active": 1760000000},
+    {"id": "fixture-b", "title": "Venus", "profile": "default", "last_active": 1760000000},
+]
 PARTIAL = "Here is the first part"
 SCENARIOS = {
     "Complete the reply": "complete",
@@ -35,7 +40,10 @@ class HermesStub(BaseHTTPRequestHandler):
         path = "/" + path
         if path == "/fixture/state":
             with STATS_LOCK:
-                self.respond(json.dumps(STATS[fixture_id]).encode(), "application/json")
+                stats = STATS[fixture_id]
+                if not fixture_id.startswith("shortcut-"):
+                    stats = {key: value for key, value in stats.items() if key != "resumed"}
+                self.respond(json.dumps(stats).encode(), "application/json")
             return
         if path == "/api/ws":
             self.websocket(fixture_id)
@@ -48,6 +56,18 @@ class HermesStub(BaseHTTPRequestHandler):
             "/api/profiles/active": {"current": "default"},
             "/api/sessions": {"sessions": []},
         }.get(path)
+        if fixture_id.startswith("shortcut-"):
+            if path == "/api/status" and fixture_id == "shortcut-auth":
+                data = {"auth_required": True, "auth_providers": ["browser"]}
+            elif path == "/api/sessions":
+                data = {"sessions": SHORTCUT_CHATS}
+            elif path.startswith("/api/sessions/"):
+                key = path.split("/")[3]
+                data = next((chat for chat in SHORTCUT_CHATS if chat["id"] == key), None)
+                if key == "fixture":
+                    data = {"id": "fixture", "title": "Ask Hermes", "profile": "default"}
+                if data and path.endswith("/messages"):
+                    data = {"messages": []}
         if data is None:
             self.send_error(404)
             return
@@ -92,23 +112,57 @@ class HermesStub(BaseHTTPRequestHandler):
         self.stopped = threading.Event()
         self.interrupt_received = threading.Event()
         self.scenario = None
+        self.admission = None
+        self.sequence = 0
         with STATS_LOCK:
             STATS[fixture_id]["connections"] += 1
         try:
-            self.event("gateway.ready")
+            canonical = fixture_id.startswith("shortcut-") and not fixture_id.startswith("shortcut-legacy")
+            self.event("gateway.ready", {"session_authority": True} if canonical else None)
             while (request := self.read_request()) is not None:
                 method = request["method"]
                 if method in {"session.create", "session.resume"}:
-                    self.result(request, {"session_id": "runtime", "stored_session_id": "fixture"})
+                    key = request["params"].get("session_id", "fixture")
+                    if method == "session.resume":
+                        with STATS_LOCK:
+                            STATS[fixture_id]["resumed"].append(key)
+                    snapshot = {"session_id": "runtime", "stored_session_id": key, "running": fixture_id == "shortcut-busy",
+                                "pending": [], "prompts": [], "status": "idle", "open_requests": [],
+                                "last_sequence": 0, "replay_epoch": "fixture"}
+                    if fixture_id == "shortcut-approval" and method == "session.resume":
+                        snapshot["prompts"] = [{"kind": "approval", "prompt_id": "fixture"}]
+                    self.result(request, snapshot)
                 elif method == "gateway.ping":
                     self.result(request, {})
+                elif method == "client.capabilities":
+                    self.result(request, {"server_requests": True})
+                elif method == "prompt.receipt":
+                    self.result(request, {"admission_id": request["params"]["admission_id"], "status": "started"})
                 elif method == "prompt.submit":
+                    if canonical and not request["params"].get("submission_id"):
+                        self.write_json({"jsonrpc": "2.0", "id": request["id"],
+                                         "error": {"code": 4001, "message": "invalid_params"}})
+                        continue
                     self.scenario = SCENARIOS.get(request["params"]["text"])
                     with STATS_LOCK:
                         STATS[fixture_id]["prompts"] += 1
-                    self.result(request, {})
+                    if canonical:
+                        self.admission = "ask-admission"
+                        if fixture_id == "shortcut-no-receipt":
+                            return
+                        self.result(request, {"admission_id": self.admission, "status": "queued",
+                                              "execution_generation": 7})
+                        if fixture_id == "shortcut-disconnect":
+                            return
+                    elif fixture_id == "shortcut-legacy-queued":
+                        self.result(request, {"status": "queued"})
+                        continue
+                    else:
+                        self.result(request, {"status": "streaming"})
                     threading.Thread(target=self.reply, args=(fixture_id, request["params"]["text"]), daemon=True).start()
                 elif method == "session.interrupt":
+                    with STATS_LOCK:
+                        STATS[fixture_id]["interrupts"] += 1
                     self.interrupt_received.set()
                     GATES[fixture_id, self.scenario, "interrupted"].set()
                     if self.scenario == "stop-ignore":
@@ -129,6 +183,8 @@ class HermesStub(BaseHTTPRequestHandler):
             pass
         finally:
             self.stopped.set()
+            with STATS_LOCK:
+                STATS[fixture_id]["closed"] += 1
 
     def reply(self, fixture_id, text):
         try:
@@ -137,6 +193,29 @@ class HermesStub(BaseHTTPRequestHandler):
             pass
 
     def stream_reply(self, fixture_id, text):
+        if fixture_id.startswith("shortcut-"):
+            if self.admission:
+                self.event("message.complete", {"status": "complete", "text": "Wrong chat turn"},
+                           admission="foreign-admission", generation=8)
+            self.event("message.delta", {"text": "A partial reply"})
+            if text.lower().startswith("fail"):
+                self.event("message.complete", {"status": "error", "partial": True, "text": "A partial reply"})
+            elif text.lower().startswith("wait"):
+                self.stopped.wait(timeout=30)
+            elif text.lower().startswith("approval"):
+                self.event("approval.request", {"prompt_id": "fixture"})
+            elif text.lower().startswith("no text"):
+                self.event("message.complete", {"status": "complete", "text": ""})
+            elif text.lower().startswith("oversize"):
+                self.event("message.complete", {"status": "complete", "text": "🪐" * 32769})
+            elif text.lower().startswith("long"):
+                self.event("message.complete", {"status": "complete", "text":
+                    ("**Venus** orbits the Sun in about 225 Earth days. Its atmosphere is rich in carbon dioxide. "
+                     "A day on Venus is longer than a Venusian year.\n\n") * 5})
+            else:
+                self.event("message.complete", {"status": "complete",
+                                                "text": "Venus takes about 225 Earth days to orbit the Sun."})
+            return True
         if text == "Send after reconnecting":
             self.event("message.complete", {"text": "The next reply arrived."})
             return True
@@ -214,10 +293,15 @@ class HermesStub(BaseHTTPRequestHandler):
                 return json.loads(data)
         return None
 
-    def event(self, kind, payload=None):
-        self.write_json({"jsonrpc": "2.0", "method": "event", "params": {
+    def event(self, kind, payload=None, admission=None, generation=7):
+        params = {
             "type": kind, "session_id": "runtime", "payload": payload or {},
-        }})
+        }
+        if self.admission:
+            self.sequence += 1
+            params.update(admission_id=admission or self.admission, execution_generation=generation,
+                          seq=self.sequence, replay_epoch="fixture")
+        self.write_json({"jsonrpc": "2.0", "method": "event", "params": params})
 
     def result(self, request, result):
         self.write_json({"jsonrpc": "2.0", "id": request["id"], "result": result})
@@ -227,7 +311,12 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def write_frame(self, opcode, data):
         size = len(data)
-        header = bytes([128 | opcode, size]) if size < 126 else bytes([128 | opcode, 126]) + struct.pack("!H", size)
+        if size < 126:
+            header = bytes([128 | opcode, size])
+        elif size < 65536:
+            header = bytes([128 | opcode, 126]) + struct.pack("!H", size)
+        else:
+            header = bytes([128 | opcode, 127]) + struct.pack("!Q", size)
         with self.write_lock:
             self.wfile.write(header + data)
 

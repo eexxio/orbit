@@ -69,8 +69,18 @@ final class LiveChat {
         }
     }
 
+    func refreshHistory() async {
+        guard let key, !isGenerating else { return }
+        let client = HermesClient.shared
+        let scope = client.shortcutScope
+        let prompt = latestPromptID
+        guard let fresh = try? await client.messages(for: key), !Task.isCancelled,
+              scope == client.shortcutScope, prompt == latestPromptID, !isGenerating else { return }
+        messages = fresh.map(ChatMessage.init)
+    }
+
     func send(_ text: String) {
-        guard !isGenerating else { return }
+        guard !isGenerating, key == nil || HermesClient.shared.shortcutChatReservation != key else { return }
         let prompt = ChatMessage(text: text, isUser: true)
         messages.append(prompt)
         latestPromptID = prompt.id

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import CryptoKit
 
 // The Hermes Agent dashboard endpoints this client talks to:
 //   • GET  /api/status                 – public; tells us how to sign in
@@ -7,12 +8,13 @@ import Observation
 //   • GET  /                           – an open dashboard's page carries its session token
 //   • GET  /api/profiles/active        – `{current}` profile name
 //   • GET  /api/sessions               – session list
+//   • GET  /api/sessions/{key}         – verify the selected Shortcut chat
 //   • GET  /api/sessions/{key}/messages – transcript
 //   • GET  /api/profiles/{name}/soul   – `{content, exists}`: the profile's SOUL.md
 //   • PUT  /api/profiles/{name}/soul   – `{content}` replaces SOUL.md
 //   • POST /api/auth/ws-ticket         – single-use ticket for the gateway socket
 //   • WS   /api/ws                     – JSON-RPC 2.0 gateway: session.create / session.resume /
-//                                        prompt.submit / session.interrupt, streaming `message.delta` / `message.interim` /
+//                                        prompt.submit / prompt.receipt / session.interrupt, streaming `message.delta` / `message.interim` /
 //                                        `message.complete`, `reasoning.delta` / `reasoning.available`,
 //                                        and `tool.start` / `tool.complete` events.
 
@@ -25,12 +27,15 @@ final class HermesClient {
     enum State: Equatable { case disconnected, connecting, connected, failed(String) }
 
     // Saved configuration
-    var address: String { didSet { UserDefaults.standard.set(address, forKey: "hermes.address") } }
-    var username: String { didSet { UserDefaults.standard.set(username, forKey: "hermes.username") } }
-    var password: String { didSet { Keychain.write(password, "password") } }
+    var address: String { didSet { settingsRevision = UUID(); UserDefaults.standard.set(address, forKey: "hermes.address") } }
+    var username: String { didSet { settingsRevision = UUID(); UserDefaults.standard.set(username, forKey: "hermes.username") } }
+    var password: String { didSet { settingsRevision = UUID(); Keychain.write(password, "password") } }
     /// Optional Cloudflare Access service token, for dashboards behind Cloudflare Tunnel.
-    var accessClientID: String { didSet { UserDefaults.standard.set(accessClientID, forKey: "hermes.cfid") } }
-    var accessClientSecret: String { didSet { Keychain.write(accessClientSecret, "cfsecret") } }
+    var accessClientID: String { didSet { settingsRevision = UUID(); UserDefaults.standard.set(accessClientID, forKey: "hermes.cfid") } }
+    var accessClientSecret: String { didSet { settingsRevision = UUID(); Keychain.write(accessClientSecret, "cfsecret") } }
+    @ObservationIgnored private(set) var settingsRevision = UUID()
+    @ObservationIgnored private var signedInRevision: UUID?
+    @ObservationIgnored private var validatedProfileRevision: UUID?
 
     private(set) var state: State = .disconnected
     private(set) var serverVersion: String?
@@ -46,6 +51,9 @@ final class HermesClient {
     /// Chats with a turn running or a screen showing them, by session key, so leaving a chat
     /// mid-reply doesn't drop it. Not observed: views watch the `LiveChat` itself.
     @ObservationIgnored private var liveChats: [String: LiveChat] = [:]
+    var shortcutChatReservation: String?
+    @ObservationIgnored var shortcutInProgress = false
+    @ObservationIgnored private(set) var shortcutSessions: (scope: String, chats: [HermesSession])?
 
     private init() {
         let d = UserDefaults.standard
@@ -98,6 +106,7 @@ final class HermesClient {
     }
 
     private func signOutLocally() {
+        shortcutSessions = nil
         prefetchTask?.cancel()
         prefetchTask = nil
         signInTask?.cancel()
@@ -109,27 +118,37 @@ final class HermesClient {
     }
 
     func ensureSignedIn() async throws {
-        if signedIn { return }
+        if signedIn, signedInRevision == settingsRevision { return }
         if let task = signInTask { return try await task.value }
         let task = Task { try await self.performSignIn() }
         signInTask = task
-        defer { signInTask = nil }
+        defer {
+            if signInTask == task { signInTask = nil }
+        }
         try await task.value
     }
 
     private func performSignIn() async throws {
         guard let base = baseURL else { throw HermesError.notConfigured }
+        let revision = settingsRevision
         state = .connecting
         do {
+            pageToken = nil
             let (statusData, statusResponse) = try await raw(request(base, "api/status"))
+            if [401, 403].contains(statusResponse.statusCode) { throw HermesError.wrongPassword }
             guard statusResponse.statusCode == 200, let status = JSON.decode(statusData),
                   status["auth_required"].flag != nil else { throw HermesError.notDashboard }
+            try Task.checkCancellation()
+            guard settingsRevision == revision else { throw CancellationError() }
             serverVersion = status["version"].text
 
             if status["auth_required"].flag == false {
                 // An open dashboard: its page carries the token every /api route checks.
-                let (page, _) = try await raw(request(base, ""))
+                let (page, response) = try await raw(request(base, ""))
+                if [401, 403].contains(response.statusCode) { throw HermesError.wrongPassword }
                 guard let token = Self.pageToken(in: page) else { throw HermesError.notDashboard }
+                try Task.checkCancellation()
+                guard settingsRevision == revision else { throw CancellationError() }
                 pageToken = token
             } else {
                 guard status["auth_providers"].list?.contains(.string("basic")) != false else { throw HermesError.browserOnly }
@@ -142,16 +161,47 @@ final class HermesClient {
                 default: throw HermesError.http(response.statusCode, Self.detail(data))
                 }
             }
-            signedIn = true
-            if let active = try? await getJSON("api/profiles/active"), let current = active["current"].text, !current.isEmpty {
+            try Task.checkCancellation()
+            guard settingsRevision == revision else { throw CancellationError() }
+            var active = request(base, "api/profiles/active")
+            authorize(&active)
+            let profileResponse = try? await raw(active)
+            try Task.checkCancellation()
+            guard settingsRevision == revision else { throw CancellationError() }
+            if let (data, response) = profileResponse, response.statusCode == 200,
+               let current = JSON.decode(data)?["current"].text, !current.isEmpty {
                 profile = current
+                validatedProfileRevision = revision
+            } else {
+                validatedProfileRevision = nil
+                profile = "default"
             }
+            signedIn = true
+            signedInRevision = revision
             state = .connected
         } catch {
-            signedIn = false
-            state = .failed(error.localizedDescription)
+            if !Task.isCancelled, settingsRevision == revision {
+                signedIn = false
+                state = .failed(error.localizedDescription)
+            }
             throw error
         }
+    }
+
+    func ensureShortcutSignIn(refreshProfile: Bool = false) async throws {
+        let alreadyValidated = hasValidatedShortcutScope
+        try await ensureSignedIn()
+        if !hasValidatedShortcutScope || (refreshProfile && alreadyValidated) {
+            let active = try await getJSON("api/profiles/active")
+            guard let current = active["current"].text, !current.isEmpty,
+                  signedInRevision == settingsRevision else { throw HermesError.unsupported }
+            profile = current
+            validatedProfileRevision = settingsRevision
+        }
+    }
+
+    var hasValidatedShortcutScope: Bool {
+        signedIn && validatedProfileRevision == settingsRevision && signedInRevision == settingsRevision
     }
 
     // MARK: Live chats
@@ -168,6 +218,8 @@ final class HermesClient {
         if liveChats[key] === chat { liveChats[key] = nil }
     }
 
+    func isChatGenerating(_ key: String) -> Bool { liveChats[key]?.isGenerating == true }
+
     private func shutDownLiveChats() {
         let chats = liveChats.values
         liveChats = [:]
@@ -179,14 +231,9 @@ final class HermesClient {
     func refreshSessions() async {
         do {
             try await ensureSignedIn()
-            let json = try await getJSON("api/sessions", query: [
-                "profile": profile, "order": "recent", "archived": "exclude", "limit": "100", "offset": "0",
-                "min_messages": "1", "exclude_sources": "cron,kanban,oneshot,subagent,tool"
-            ])
-            sessions = (json["sessions"].list ?? []).compactMap { row in
-                // A row can be wrapped (`{session: {...}}`) on some releases.
-                let r = row["id"].text != nil ? row : row["session"]
-                guard let id = r["id"].text, !id.isEmpty, r["hidden"].flag != true else { return nil }
+            let rows = try await readVisibleSessionRows()
+            sessions = rows.compactMap { r in
+                guard let id = r["id"].text else { return nil }
                 let title = r["title"].text.flatMap { $0.isEmpty ? nil : $0 }
                     ?? r["preview"].text.flatMap { $0.isEmpty ? nil : String($0.prefix(60)) }
                     ?? "New chat"
@@ -197,6 +244,66 @@ final class HermesClient {
         } catch {
             state = .failed(error.localizedDescription)
         }
+    }
+
+    var shortcutAccount: String {
+        let identity = [baseURL?.absoluteString ?? "", username, accessClientID]
+            .map { "\($0.utf8.count):\($0)" }.joined()
+        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    var shortcutScope: String { shortcutAccount + ":" + profile }
+
+    func refreshShortcutSessions() async throws -> [HermesSession] {
+        try await ensureShortcutSignIn()
+        _ = try await readVisibleSessionRows()
+        return shortcutSessions?.chats ?? []
+    }
+
+    func validateShortcutChat(_ key: String, requireMessages: Bool = false) async throws -> Bool {
+        try await ensureShortcutSignIn()
+        guard key.range(of: #"^[A-Za-z0-9_-]+$"#, options: .regularExpression) != nil else { return false }
+        do {
+            let response = try await getJSON("api/sessions/\(key)", query: ["profile": profile])
+            let row = response["session"] == .null ? response : response["session"]
+            return row["id"].text == key && Self.isVisibleSession(row)
+                && row["profile"].text.map { $0 == profile } != false
+                && (!requireMessages || row["message_count"].int != 0)
+        } catch HermesError.http(404, _) {
+            return false
+        }
+    }
+
+    private func readVisibleSessionRows() async throws -> [JSON] {
+        let scope = shortcutScope
+        let json = try await getJSON("api/sessions", query: [
+            "profile": profile, "order": "recent", "archived": "exclude", "limit": "100", "offset": "0",
+            "min_messages": "1", "exclude_sources": "cron,kanban,oneshot,subagent,tool"
+        ])
+        guard scope == shortcutScope else { throw HermesError.notConfigured }
+        let rows = (json["sessions"].list ?? [])
+            .map { $0["id"].text != nil ? $0 : $0["session"] }
+            .filter(Self.isVisibleSession)
+        _ = updateShortcutSessions(rows, scope: scope)
+        return rows
+    }
+
+    private func updateShortcutSessions(_ rows: [JSON], scope: String) -> [HermesSession] {
+        let chats = rows.compactMap { row -> HermesSession? in
+            guard let id = row["id"].text else { return nil }
+            let title = row["title"].text.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled chat"
+            return HermesSession(id: id, title: title,
+                                 lastActive: row["last_active"].double ?? row["last_active_at"].double)
+        }
+        shortcutSessions = (scope, chats)
+        return chats
+    }
+
+    private static func isVisibleSession(_ row: JSON) -> Bool {
+        guard let id = row["id"].text, !id.isEmpty,
+              row["hidden"].flag != true, row["hidden"].int != 1,
+              row["archived"].flag != true, row["archived"].int != 1 else { return false }
+        return !["cron", "kanban", "oneshot", "subagent", "tool"].contains(row["source"].text ?? "")
     }
 
     func messages(for key: String) async throws -> [HermesMessage] {
@@ -269,11 +376,14 @@ final class HermesClient {
 
     /// Sends a signed-in request; one 401 (an expired cookie or a restarted host) signs in again.
     private func authorizedRaw(_ req: inout URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let revision = settingsRevision
         authorize(&req)
         var (data, response) = try await raw(req)
         if response.statusCode == 401 {
+            guard settingsRevision == revision else { throw CancellationError() }
             signedIn = false
             try await ensureSignedIn()
+            guard settingsRevision == revision else { throw CancellationError() }
             authorize(&req)
             (data, response) = try await raw(req)
         }

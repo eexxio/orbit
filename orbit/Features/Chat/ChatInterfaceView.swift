@@ -6,9 +6,11 @@ struct ChatInterfaceView: View {
 
     /// The Hermes session this chat shows; nil starts a new one on the first message.
     let sessionKey: String?
+    let handoff: HermesHandoffChat?
 
-    init(sessionKey: String? = nil) {
+    init(sessionKey: String? = nil, handoff: HermesHandoffChat? = nil) {
         self.sessionKey = sessionKey
+        self.handoff = handoff
         // A chat still replying in the background comes back as it is, not reloaded.
         _chat = State(initialValue: HermesClient.shared.liveChat(for: sessionKey))
     }
@@ -19,6 +21,8 @@ struct ChatInterfaceView: View {
     @State private var scrollPosition = ScrollPosition()
     @State private var draft = ""
     @State private var stopCount = 0
+    @State private var handoffCheck = HermesHandoffChat.Check.checking
+    @State private var refreshHandoff = 0
 
     @FocusState private var composerIsFocused: Bool
 
@@ -34,15 +38,51 @@ struct ChatInterfaceView: View {
                 }
             }
             .background(Color(uiColor: .systemBackground))
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let handoff, handoff.needsCheck, handoffCheck != .finished { handoffBanner(handoff) }
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 composer
             }
         }
-        .task { await chat.loadHistory() }
+        .task {
+            if handoff?.needsCheck != true { await chat.loadHistory() }
+        }
+        .task(id: refreshHandoff) {
+            guard let handoff, handoff.needsCheck else { return }
+            handoffCheck = .checking
+            if refreshHandoff == 0 { await chat.loadHistory() } else { await chat.refreshHistory() }
+            handoffCheck = await handoff.check()
+            if handoffCheck == .finished { await chat.refreshHistory() }
+        }
         .task { await focusComposerForNewChat() }
         .onAppear { chat.isOnScreen = true }
         // Only lets the chat go if no turn is running; otherwise it finishes in the background.
         .onDisappear { chat.isOnScreen = false }
+    }
+
+    private func handoffBanner(_ handoff: HermesHandoffChat) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            switch handoffCheck {
+            case .checking: Text("Checking the reply from Siri or Shortcuts…")
+            case .pending: Text("The reply isn’t available yet. Refresh to check again.")
+            case .unverified: Text("I couldn’t verify the reply. Check the transcript before asking again.")
+            case .finished: EmptyView()
+            case .dashboard: Text("This request needs the Hermes dashboard.")
+            case .noRequest: Text("That request is no longer available.")
+            }
+            if handoffCheck == .dashboard, let url = handoff.dashboardURL {
+                Link("Open Hermes dashboard", destination: url).frame(minHeight: 44)
+            }
+            Button("Refresh") { refreshHandoff += 1 }
+                .frame(minHeight: 44)
+                .disabled(handoffCheck == .checking || chat.isGenerating)
+        }
+        .font(.subheadline)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
     }
 
     // MARK: - Loading State
@@ -290,6 +330,7 @@ struct ChatInterfaceView: View {
 
     private var canSend: Bool {
         !chat.isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (sessionKey == nil || HermesClient.shared.shortcutChatReservation != sessionKey)
     }
 
     // MARK: - Send Message

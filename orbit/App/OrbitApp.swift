@@ -7,9 +7,22 @@ import SwiftUI
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            content
                 .tint(accent.color)
                 .preferredColorScheme(theme.colorScheme)
         }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        #if DEBUG && targetEnvironment(simulator)
+        if let probe = AskHermesUITestProbe() {
+            probe
+        } else {
+            ContentView()
+        }
+        #else
+        ContentView()
+        #endif
     }
 }

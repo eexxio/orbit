@@ -3,9 +3,11 @@ import Foundation
 /// One chat: its own gateway socket, the runtime session it resumed or created, and its turns.
 @MainActor
 final class HermesConversation {
+    enum Refusal: Error { case rejected }
     /// The stored session key, once the host has one.
     private(set) var storedKey: String?
-    private var runtimeID: String?
+    private(set) var runtimeID: String?
+    private(set) var usesSessionAuthority = false
     private var acceptsReplyEvents = true
     private var socket: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
@@ -26,10 +28,15 @@ final class HermesConversation {
     var onReasoning: ((_ text: String, _ replace: Bool) -> Void)?
     var onToolStart: ((HermesToolCall) -> Void)?
     var onToolComplete: ((_ id: String, _ summary: String?) -> Void)?
+    var observeFrame: ((JSON) -> Bool)?
 
     private let client = HermesClient.shared
 
     init(storedKey: String?) { self.storedKey = storedKey }
+
+    func noteStoredKey(_ key: String) {
+        if storedKey == nil, !key.isEmpty { storedKey = key }
+    }
 
     func close() {
         connectionID = UUID()
@@ -43,9 +50,22 @@ final class HermesConversation {
     /// Sends one prompt, opening the socket and session first when needed.
     func send(_ text: String) async throws {
         if socket == nil || runtimeID == nil { try await open() }
+        _ = try await submit(text)
+    }
+
+    func submit(_ text: String) async throws -> JSON {
         guard let runtimeID else { throw HermesError.unsupported }
+        try Task.checkCancellation()
         acceptsReplyEvents = true
-        _ = try await call("prompt.submit", ["session_id": .string(runtimeID), "text": .string(text), "queued": .bool(true)])
+        var params: [String: JSON] = ["session_id": .string(runtimeID), "text": .string(text), "queued": .bool(true)]
+        if usesSessionAuthority { params["submission_id"] = .string(UUID().uuidString) }
+        return try await call("prompt.submit", params, classifyRefusal: observeFrame != nil)
+    }
+
+    func receipt(for admission: String) async throws -> JSON {
+        guard let runtimeID else { throw HermesError.unsupported }
+        return try await call("prompt.receipt", ["session_id": .string(runtimeID),
+                                                 "admission_id": .string(admission)], timeout: .seconds(3))
     }
 
     func interrupt(timeout: Duration) async -> Bool {
@@ -59,10 +79,12 @@ final class HermesConversation {
         }
     }
 
-    private func open() async throws {
+    @discardableResult
+    func open(forShortcut: Bool = false) async throws -> JSON {
         close()
         let opening = connectionID
         let (upgrade, session) = try await client.gatewayUpgrade()
+        try Task.checkCancellation()
         guard connectionID == opening else { throw HermesError.socketClosed }
         let task = session.webSocketTask(with: upgrade)
         task.maximumMessageSize = 16 * 1024 * 1024
@@ -75,34 +97,48 @@ final class HermesConversation {
         guard ready["method"].text == "event", ready["params"]["type"].text == "gateway.ready" else {
             throw HermesError.unsupported
         }
+        usesSessionAuthority = ready["params"]["payload"]["session_authority"].flag == true
         startReader(task)
         startHeartbeat(task)
 
         let profile = client.profile
+        var params: [String: JSON] = ["profile": .string(profile), "source": .string("gui")]
+        if !usesSessionAuthority, forShortcut || storedKey != nil { params["close_on_disconnect"] = .bool(false) }
+        let reply: JSON
         if let storedKey {
-            let reply = try await call("session.resume", ["profile": .string(profile), "session_id": .string(storedKey),
-                                                          "close_on_disconnect": .bool(false), "source": .string("gui"),
-                                                          "omit_messages": .bool(true)])
-            guard socket === task else { throw HermesError.socketClosed }
-            guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
-            runtimeID = runtime
+            params["session_id"] = .string(storedKey)
+            params["omit_messages"] = .bool(true)
+            reply = try await call("session.resume", params)
         } else {
-            let reply = try await call("session.create", ["profile": .string(profile), "source": .string("gui")])
-            guard socket === task else { throw HermesError.socketClosed }
-            guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
-            runtimeID = runtime
-            storedKey = reply["stored_session_id"].text ?? reply["info"]["stored_session_id"].text
+            reply = try await call("session.create", params)
         }
+        guard socket === task else { throw HermesError.socketClosed }
+        guard let runtime = reply["session_id"].text, !runtime.isEmpty else { throw HermesError.unsupported }
+        runtimeID = runtime
+        storedKey = reply["stored_session_id"].text ?? reply["session_key"].text
+            ?? reply["info"]["stored_session_id"].text ?? reply["info"]["session_key"].text ?? storedKey
+        if forShortcut, !usesSessionAuthority {
+            _ = try? await call("client.capabilities", ["server_requests": .bool(true)], timeout: .seconds(1))
+        }
+        return reply
     }
 
-    private func call(_ method: String, _ params: [String: JSON], timeout: Duration? = nil) async throws -> JSON {
+    private var classifySubmitRefusal: Int?
+
+    private func call(_ method: String, _ params: [String: JSON], timeout: Duration? = nil,
+                      classifyRefusal: Bool = false) async throws -> JSON {
         guard let socket else { throw HermesError.socketClosed }
+        try Task.checkCancellation()
         nextID += 1
         let id = nextID
+        if classifyRefusal { classifySubmitRefusal = id }
         let frame: JSON = .object(["jsonrpc": .string("2.0"), "id": .number(Double(id)),
                                    "method": .string(method), "params": .object(params)])
         var timer: Task<Void, Never>?
-        defer { timer?.cancel() }
+        defer {
+            timer?.cancel()
+            if classifySubmitRefusal == id { classifySubmitRefusal = nil }
+        }
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
             if let timeout {
@@ -147,6 +183,7 @@ final class HermesConversation {
     }
 
     private func consume(_ frame: JSON) {
+        if observeFrame?(frame) == true { return }
         if frame["method"].text == "event" { apply(frame["params"]); return }
         // A server→client request (approvals, questions): this client doesn't advertise
         // `server_requests`, so the host shouldn't send any; answer empty to be safe.
@@ -159,7 +196,15 @@ final class HermesConversation {
         }
         guard let id = frame["id"].int, let continuation = pending.removeValue(forKey: id) else { return }
         if frame["error"] != .null {
-            continuation.resume(throwing: HermesError.server(frame["error"]["message"].text ?? "The server refused the request."))
+            let error = frame["error"]
+            let reason = error["data"]["reason"].text
+            if id == classifySubmitRefusal,
+               [-32601, -32602, 4001].contains(error["code"].int ?? 0)
+                || ["SESSION_NOT_OWNED", "SESSION_OWNER_BUSY", "session_not_found", "invalid_params"].contains(reason ?? "") {
+                continuation.resume(throwing: Refusal.rejected)
+            } else {
+                continuation.resume(throwing: HermesError.server(error["message"].text ?? "The server refused the request."))
+            }
         } else {
             continuation.resume(returning: frame["result"])
         }

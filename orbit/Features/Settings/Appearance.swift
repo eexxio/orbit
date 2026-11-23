@@ -53,6 +53,15 @@ enum Theme: String, CaseIterable, Identifiable {
 struct AccentPicker: View {
 
     @Binding var selection: Accent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var selectionRing
+
+    private var reducesMotion: Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uitest-reduce-motion") { return true }
+        #endif
+        return reduceMotion
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -64,19 +73,36 @@ struct AccentPicker: View {
                         .fill(accent.color)
                         .frame(width: 26, height: 26)
                         .padding(3)
-                        .overlay {
-                            if accent == selection {
-                                Circle().strokeBorder(accent.color, lineWidth: 2)
+                        .background {
+                            if !reducesMotion {
+                                Color.clear.matchedGeometryEffect(id: accent, in: selectionRing)
                             }
                         }
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
+                .overlay {
+                    if reducesMotion, accent == selection {
+                        Circle().strokeBorder(accent.color, lineWidth: 2)
+                            .frame(width: 32, height: 32)
+                            .transition(.opacity)
+                    }
+                }
                 .accessibilityLabel(accent.name)
+                .accessibilityIdentifier("appearance.accent.\(accent.rawValue)")
                 .accessibilityAddTraits(accent == selection ? .isSelected : [])
             }
         }
+        .overlay {
+            if !reducesMotion {
+                Circle().strokeBorder(selection.color, lineWidth: 2)
+                    .frame(width: 32, height: 32)
+                    .matchedGeometryEffect(id: selection, in: selectionRing, properties: .position, isSource: false)
+                    .allowsHitTesting(false)
+            }
+        }
         .padding(.vertical, 4)
+        .animation(reducesMotion ? .easeInOut(duration: 0.15) : .snappy(duration: 0.25), value: selection)
         .sensoryFeedback(.selection, trigger: selection)
     }
 }

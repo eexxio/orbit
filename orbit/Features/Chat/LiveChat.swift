@@ -19,6 +19,7 @@ final class LiveChat {
     private(set) var key: String?
     var messages: [ChatMessage] = []
     private(set) var replyState: ReplyState = .idle
+    private(set) var attachmentFallbackText: String?
     var isGenerating: Bool { replyState.isActive }
     /// True while an existing chat's history loads and nothing is cached to show.
     private(set) var isLoadingHistory = false
@@ -37,6 +38,8 @@ final class LiveChat {
     @ObservationIgnored private var conversation: HermesConversation?
     @ObservationIgnored private var latestPromptID: UUID?
     @ObservationIgnored private var pendingInterrupt: Task<Void, Never>?
+    @ObservationIgnored private var pendingSend: Task<Void, Never>?
+    @ObservationIgnored private var outgoingAttachments: [OutgoingAttachment] = []
 
     init(key: String?) { self.key = key }
 
@@ -69,24 +72,29 @@ final class LiveChat {
         }
     }
 
-    func send(_ text: String) {
+    func send(_ text: String, attachments: [DraftAttachment] = []) {
         guard !isGenerating else { return }
-        let prompt = ChatMessage(text: text, isUser: true)
+        attachmentFallbackText = nil
+        var prompt = ChatMessage(text: text, isUser: true)
+        prompt.item.attachments = attachments.isEmpty ? nil : attachments.map(\.descriptor)
         messages.append(prompt)
+        outgoingAttachments = attachments.compactMap(\.outgoing)
         latestPromptID = prompt.id
         replyState = .waiting
         // Held while the turn runs, even if the screen goes away.
         if let key { HermesClient.shared.keepLive(self, as: key) }
-        Task {
+        let outgoing = outgoingAttachments
+        pendingSend = Task {
             await pendingInterrupt?.value
             guard isGenerating, latestPromptID == prompt.id else { return }
             let chat = conversation ?? makeConversation()
             do {
-                try await chat.send(text)
+                try await chat.send(text, attachments: outgoing)
                 guard conversation === chat else { return }
                 adoptKey(chat.storedKey)
             } catch {
                 guard conversation === chat, isGenerating, latestPromptID == prompt.id, pendingInterrupt == nil else { return }
+                if case HermesError.attachmentsUnsupported = error { attachmentFallbackText = text }
                 finishTurn(as: .failed(error.localizedDescription))
             }
         }
@@ -95,9 +103,12 @@ final class LiveChat {
     func stop() {
         guard isGenerating else { return }
         let chat = conversation
+        let sending = pendingSend
+        sending?.cancel()
         finishTurn(as: .stopped)
         guard let chat, pendingInterrupt == nil else { return }
         pendingInterrupt = Task {
+            await sending?.value
             let ok = await chat.interrupt(timeout: .seconds(3))
             if !ok, conversation === chat {
                 chat.close()
@@ -124,6 +135,7 @@ final class LiveChat {
 
     /// Ends the turn without waiting for the host, for a sign-out or a server change.
     func shutDown() {
+        pendingSend?.cancel()
         conversation?.close()
         conversation = nil
         if isGenerating { finishTurn(as: .idle) }
@@ -221,6 +233,7 @@ final class LiveChat {
         liveToolIDs.removeAll()
         streamStart = nil
         replyState = state
+        if state == .completed || state == .idle { outgoingAttachments = [] }
         adoptKey(conversation?.storedKey)
         switch state {
         case .failed, .interrupted:

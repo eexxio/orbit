@@ -3,9 +3,12 @@ import Foundation
 enum HermesError: LocalizedError {
     case notConfigured, invalidAddress, notDashboard, wrongPassword, browserOnly
     case http(Int, String?), unsupported, socketClosed, server(String)
+    case rpc(Int, String), attachmentsUnsupported
 
     var errorDescription: String? {
         switch self {
+        case .rpc(_, let message): return message
+        case .attachmentsUnsupported: return "This Hermes server can't take attachments"
         case .notConfigured: return "Add your Hermes server in Settings."
         case .invalidAddress: return "That server address isn't valid."
         case .notDashboard: return "That address didn't answer like a Hermes dashboard."

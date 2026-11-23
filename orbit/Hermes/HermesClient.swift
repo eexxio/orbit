@@ -12,7 +12,9 @@ import Observation
 //   • PUT  /api/profiles/{name}/soul   – `{content}` replaces SOUL.md
 //   • POST /api/auth/ws-ticket         – single-use ticket for the gateway socket
 //   • WS   /api/ws                     – JSON-RPC 2.0 gateway: session.create / session.resume /
-//                                        prompt.submit / session.interrupt, streaming `message.delta` / `message.interim` /
+//                                        image.attach_bytes / file.attach / image.detach / prompt.submit / session.interrupt,
+//                                        prompt.submit includes input_id and staged image attachments [{path, mime}],
+//                                        streaming `message.delta` / `message.interim` /
 //                                        `message.complete`, `reasoning.delta` / `reasoning.available`,
 //                                        and `tool.start` / `tool.complete` events.
 
@@ -25,7 +27,8 @@ final class HermesClient {
     enum State: Equatable { case disconnected, connecting, connected, failed(String) }
 
     // Saved configuration
-    var address: String { didSet { UserDefaults.standard.set(address, forKey: "hermes.address") } }
+    var address: String { didSet { if oldValue != address { supportsAttachments = nil }; UserDefaults.standard.set(address, forKey: "hermes.address") } }
+    var supportsAttachments: Bool?
     var username: String { didSet { UserDefaults.standard.set(username, forKey: "hermes.username") } }
     var password: String { didSet { Keychain.write(password, "password") } }
     /// Optional Cloudflare Access service token, for dashboards behind Cloudflare Tunnel.
@@ -214,6 +217,10 @@ final class HermesClient {
             for index in messages.indices where messages[index].role == "assistant" {
                 messages[index].rate = rates[messages[index].text]
             }
+            for index in messages.indices where messages[index].isUser {
+                guard let match = cached.first(where: { $0.isUser && $0.text == messages[index].text && $0.attachments?.map(\.name) == messages[index].attachments?.map(\.name) }) else { continue }
+                messages[index].attachments = match.attachments
+            }
         }
         cache.store(messages, for: key, lastActive: sessions.first { $0.id == key }?.lastActive)
         return messages
@@ -376,8 +383,12 @@ final class HermesClient {
                 let reasoning = row["reasoning"].text ?? row["reasoning_content"].text ?? ""
                 if !isBlank(reasoning) { items.append(HermesMessage(role: "reasoning", text: reasoning)) }
             }
-            let text = text(of: row["content"])
-            if !isBlank(text) { items.append(HermesMessage(role: role, text: text)) }
+            let parsed = AttachmentMarkers.parse(text(of: row["content"]), isUser: role == "user")
+            let text = parsed.text
+            let attachments = parsed.attachments
+            if !isBlank(text) || !attachments.isEmpty {
+                items.append(HermesMessage(role: role, text: text, attachments: attachments.isEmpty ? nil : attachments))
+            }
             for call in row["tool_calls"].list ?? [] {
                 guard let tool = HermesToolCall(stored: call) else { continue }
                 items.append(HermesMessage(role: "tool", text: "", tool: tool))

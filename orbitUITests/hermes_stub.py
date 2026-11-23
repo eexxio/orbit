@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 GATES = defaultdict(threading.Event)
 STATS_LOCK = threading.Lock()
-STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
+STATS = defaultdict(lambda: {"connections": 0, "prompts": 0, "images": 0, "files": 0, "detached": 0})
 PARTIAL = "Here is the first part"
 SCENARIOS = {
     "Complete the reply": "complete",
@@ -55,6 +55,11 @@ class HermesStub(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path.split("/")
+        if len(path) == 5 and path[2:] == ["fixture", "attachment", "release"]:
+            GATES[path[1], "attachment", "release"].set()
+            self.send_response(204)
+            self.end_headers()
+            return
         if len(path) != 5 or path[2] != "fixture" or path[3] not in SCENARIOS.values() or path[4] not in {"delta", "end", "interrupted"}:
             self.send_error(404)
             return
@@ -77,6 +82,7 @@ class HermesStub(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def websocket(self, fixture_id):
+        staged = []
         key = self.headers["Sec-WebSocket-Key"]
         if not key or self.headers.get("Upgrade", "").lower() != "websocket":
             self.send_error(400)
@@ -102,12 +108,59 @@ class HermesStub(BaseHTTPRequestHandler):
                     self.result(request, {"session_id": "runtime", "stored_session_id": "fixture"})
                 elif method == "gateway.ping":
                     self.result(request, {})
+                elif method in {"image.attach_bytes", "file.attach"}:
+                    with STATS_LOCK:
+                        STATS[fixture_id]["images" if method == "image.attach_bytes" else "files"] += 1
+                    if fixture_id.startswith("staging-stop"):
+                        if not GATES[fixture_id, "attachment", "release"].wait(timeout=20):
+                            return
+                    if fixture_id.startswith("unsupported"):
+                        self.write_json({"jsonrpc": "2.0", "id": request["id"], "error": {
+                            "code": -32602 if fixture_id.startswith("unsupported-invalid") else -32601,
+                            "message": "invalid_params: " + method if fixture_id.startswith("unsupported-invalid") else "Method not found: " + method}})
+                        continue
+                    if fixture_id.startswith("staging-error") or fixture_id.startswith("invalid-other"):
+                        self.write_json({"jsonrpc": "2.0", "id": request["id"], "error": {
+                            "code": -32602 if fixture_id.startswith("invalid-other") else -32000,
+                            "message": "invalid_params: another.method" if fixture_id.startswith("invalid-other") else "Temporary staging failure"}})
+                        continue
+                    if fixture_id.startswith("malformed"):
+                        self.result(request, {})
+                        continue
+                    params = request["params"]
+                    name = params.get("filename", params.get("name"))
+                    if method == "image.attach_bytes":
+                        assert base64.b64decode(params["content_base64"])
+                        staged.append(("image", name))
+                        self.result(request, {"attached": True, "path": "/images/" + name,
+                                              "mime": "image/png" if name.endswith(".png") else "image/jpeg",
+                                              "name": name, "text": "[User attached image: " + name + "]"})
+                    else:
+                        assert base64.b64decode(params["data_url"].split(",", 1)[1])
+                        staged.append(("file", name))
+                        self.result(request, {"attached": True, "name": name, "ref_text": "@file:/files/" + name})
+                elif method == "image.detach":
+                    with STATS_LOCK:
+                        STATS[fixture_id]["detached"] += 1
+                    name = request["params"]["path"].rsplit("/", 1)[-1]
+                    staged = [item for item in staged if item != ("image", name)]
+                    self.result(request, {"detached": True})
                 elif method == "prompt.submit":
                     self.scenario = SCENARIOS.get(request["params"]["text"])
                     with STATS_LOCK:
                         STATS[fixture_id]["prompts"] += 1
+                    text = request["params"]["text"]
+                    assert request["params"]["input_id"]
                     self.result(request, {})
-                    threading.Thread(target=self.reply, args=(fixture_id, request["params"]["text"]), daemon=True).start()
+                    if staged:
+                        assert all("@file:/files/" + name in text for kind, name in staged if kind == "file")
+                        images = request["params"].get("attachments", [])
+                        assert all(image["path"] and image["mime"].startswith("image/") for image in images)
+                        count = len(images) + text.count("@file:")
+                        self.event("message.complete", {"text": "Got " + str(count) + " attachment(s)"})
+                        staged = []
+                        continue
+                    threading.Thread(target=self.reply, args=(fixture_id, text), daemon=True).start()
                 elif method == "session.interrupt":
                     self.interrupt_received.set()
                     GATES[fixture_id, self.scenario, "interrupted"].set()
@@ -137,6 +190,9 @@ class HermesStub(BaseHTTPRequestHandler):
             pass
 
     def stream_reply(self, fixture_id, text):
+        if fixture_id.startswith("unsupported"):
+            self.event("message.complete", {"text": "Text-only reply"})
+            return
         if text == "Send after reconnecting":
             self.event("message.complete", {"text": "The next reply arrived."})
             return True

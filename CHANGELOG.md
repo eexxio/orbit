@@ -7,10 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- Stop cancels pending attachment staging, and unsupported servers restore your message draft.
 - New chat opens a blank conversation after a completed, interrupted, or failed reply instead of reopening the previous transcript.
 
 ### Added
 - Stop a generating reply from the composer, keeping partial text and your next draft with a quiet Stopped status.
+- Attach photos and files to a message.
 - Connect to a Hermes Agent dashboard: open, username/password, and Cloudflare Access sign-in.
 - Chat list with search, and new chats.
 - Streaming chat over the Hermes gateway WebSocket, with Markdown-rendered replies.

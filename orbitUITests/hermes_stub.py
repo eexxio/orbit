@@ -43,10 +43,15 @@ class HermesStub(BaseHTTPRequestHandler):
         if path == "/":
             self.respond(b'<script>window.__HERMES_SESSION_TOKEN__ = "fixture";</script>', "text/html")
             return
+        if path == "/api/sessions":
+            with STATS_LOCK:
+                sessions = [{"id": "fixture", "title": "Fixture chat"}] if STATS[fixture_id]["prompts"] else []
+            self.respond(json.dumps({"sessions": sessions}).encode(), "application/json")
+            return
         data = {
             "/api/status": {"auth_required": False, "version": "fixture"},
             "/api/profiles/active": {"current": "default"},
-            "/api/sessions": {"sessions": []},
+            "/api/sessions/fixture/messages": {"messages": []},
         }.get(path)
         if data is None:
             self.send_error(404)

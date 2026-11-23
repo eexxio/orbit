@@ -4,8 +4,8 @@ import Observation
 /// One open chat's transcript, its gateway conversation, and the turn streaming into it.
 ///
 /// It lives outside the view so a reply keeps streaming after the user leaves the screen:
-/// `HermesClient` holds it by session key until the turn ends, and reopening the chat picks
-/// up the same object, thinking row and all.
+/// `HermesClient` holds it by session key while replying or preserving stopped turns, so
+/// reopening the chat picks up the same object, thinking row and all.
 @MainActor @Observable
 final class LiveChat {
     enum ReplyState: Equatable {
@@ -111,14 +111,17 @@ final class LiveChat {
     private func adoptKey(_ stored: String?) {
         guard key == nil, let stored else { return }
         key = stored
-        if isGenerating || isOnScreen { HermesClient.shared.keepLive(self, as: stored) }
+        if isGenerating || isOnScreen || messages.contains(where: \.endsStoppedTurn) {
+            HermesClient.shared.keepLive(self, as: stored)
+        }
     }
 
-    /// Closes the socket and drops the chat from `HermesClient` when nothing needs it any more.
+    /// Closes idle sockets, retaining stopped turns in memory until sign-out or a server change.
     private func releaseIfIdle() {
         guard !isOnScreen, !isGenerating else { return }
         conversation?.close()
         conversation = nil
+        guard !messages.contains(where: \.endsStoppedTurn) else { return }
         if let key { HermesClient.shared.releaseLive(self, key: key) }
     }
 
@@ -216,6 +219,9 @@ final class LiveChat {
 
     private func finishTurn(as state: ReplyState) {
         guard isGenerating else { return }
+        if state == .stopped, !messages.isEmpty {
+            messages[messages.count - 1].endsStoppedTurn = true
+        }
         streamingID = nil
         reasoningID = nil
         liveToolIDs.removeAll()
@@ -247,6 +253,7 @@ final class LiveChat {
 struct ChatMessage: Identifiable {
     let id = UUID()
     var item: HermesMessage
+    var endsStoppedTurn = false
 
     init(_ item: HermesMessage) { self.item = item }
 

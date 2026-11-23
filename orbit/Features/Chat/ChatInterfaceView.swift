@@ -110,16 +110,25 @@ struct ChatInterfaceView: View {
                         ? chat.messages.reversed().prefix(while: { !$0.isUser }).first(where: { $0.role == "assistant" })?.id
                         : nil
                     // Hidden tool calls stay in `messages`, so the cache and the toggle keep them.
-                    ForEach(showToolCalls ? chat.messages : chat.messages.filter { $0.tool == nil }) { message in
+                    let visibleMessages = showToolCalls ? chat.messages : chat.messages.filter { $0.tool == nil }
+                    let stoppedIDs = stoppedFooterIDs
+                    ForEach(visibleMessages) { message in
                         messageRow(message, copyText: copies[message.id], isCompletedReply: message.id == completedID)
+                        if stoppedIDs.contains(message.id) || message.id == visibleMessages.last?.id {
+                            ZStack(alignment: .leading) {
+                                Group {
+                                    if stoppedIDs.contains(message.id) {
+                                        stoppedStatus
+                                    } else {
+                                        replyStatus
+                                    }
+                                }
+                                .id(stoppedIDs.contains(message.id))
+                                .transition(reduceMotion ? .identity : .opacity)
+                            }
+                            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: chat.replyState)
+                        }
                     }
-
-                    ZStack(alignment: .leading) {
-                        replyStatus
-                            .id(chat.replyState == .stopped)
-                            .transition(reduceMotion ? .identity : .opacity)
-                    }
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: chat.replyState)
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 8)
@@ -178,6 +187,16 @@ struct ChatInterfaceView: View {
         }
         if !chat.isGenerating { close() }
         return copies
+    }
+
+    private var stoppedFooterIDs: Set<UUID> {
+        var ids: Set<UUID> = []
+        var lastVisible: UUID?
+        for message in chat.messages {
+            if showToolCalls || message.tool == nil { lastVisible = message.id }
+            if message.endsStoppedTurn, let lastVisible { ids.insert(lastVisible) }
+        }
+        return ids
     }
 
     // MARK: - Message Row
@@ -337,15 +356,6 @@ struct ChatInterfaceView: View {
             }
             .font(.subheadline)
             .foregroundStyle(.secondary)
-        case .stopped:
-            HStack(spacing: 6) {
-                Image(systemName: "stop.circle")
-                    .accessibilityHidden(true)
-                Text("Stopped")
-                    .accessibilityIdentifier("chat.reply.stopped")
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
         case .interrupted(let detail):
             replyIssue("Reply interrupted", detail: detail, identifier: "chat.reply.interrupted")
         case .failed(let detail):
@@ -353,6 +363,17 @@ struct ChatInterfaceView: View {
         default:
             EmptyView()
         }
+    }
+
+    private var stoppedStatus: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "stop.circle")
+                .accessibilityHidden(true)
+            Text("Stopped")
+                .accessibilityIdentifier("chat.reply.stopped")
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
     }
 
     private func replyIssue(_ title: String, detail: String, identifier: String) -> some View {

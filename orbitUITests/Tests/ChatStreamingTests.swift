@@ -221,6 +221,20 @@ final class ChatStreamingTests: XCTestCase {
         XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", "The next reply arrived.")).count, 1)
         XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "OLD TURN MUST NOT APPEAR")).firstMatch.exists)
         XCTAssertFalse(reply("Late final", in: app).exists)
+        let stoppedFooters = app.staticTexts.matching(NSPredicate(format: "identifier == %@", "chat.reply.stopped"))
+        XCTAssertEqual(stoppedFooters.count, 1)
+        XCTAssertGreaterThan(stoppedFooters.firstMatch.frame.minY, toolChip.frame.maxY)
+        XCTAssertLessThan(stoppedFooters.firstMatch.frame.maxY, reply("Send the next reply", in: app).frame.minY)
+        if scenario == "stop" {
+            screenshot("completed-after-stop")
+            app.swipeRight()
+            let session = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@", "chats.session.fixture")).firstMatch
+            XCTAssertTrue(session.waitForExistence(timeout: 5))
+            session.tap()
+            XCTAssertTrue(stoppedFooters.firstMatch.waitForExistence(timeout: 5))
+            XCTAssertEqual(stoppedFooters.count, 1)
+            XCTAssertTrue(reply("The next reply arrived.", in: app).exists)
+        }
         let after = try await fixtureState()
         XCTAssertEqual(after["prompts"], before["prompts"]! + 1)
         let reconnects = ["stop-error", "stop-ignore"].contains(scenario) ? 1 : 0

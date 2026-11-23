@@ -27,6 +27,7 @@ struct ContentView: View {
                         ChatInterfaceView(sessionKey: chat.id)
                             .navigationBarTitleDisplayMode(.inline)
                     }
+                    .accessibilityIdentifier("chats.session.\(chat.id)")
                 }
             }
             .navigationTitle("Chats")

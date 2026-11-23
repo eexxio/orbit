@@ -7,7 +7,7 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
-- Crossfade the stopped reply status without shifting the transcript, respecting Reduce Motion.
+- Crossfade the stopped reply status without shifting the transcript, respecting Reduce Motion, and keep it on each stopped turn when continuing or reopening the chat.
 - New chat opens a blank conversation after a completed, interrupted, or failed reply instead of reopening the previous transcript.
 
 ### Added

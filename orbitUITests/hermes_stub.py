@@ -230,7 +230,9 @@ class HermesStub(BaseHTTPRequestHandler):
     def wait(fixture_id, scenario, phase, stopped=None):
         key = (fixture_id, scenario, phase)
         gate = GATES[key]
-        for _ in range(600):
+        # Allow for XCTest's idle waits while a reply or tool is still running.
+        timeout = 180 if scenario.startswith("tool-") else 30
+        for _ in range(timeout * 20):
             if stopped is not None and stopped.is_set():
                 return False
             if gate.wait(timeout=0.05):

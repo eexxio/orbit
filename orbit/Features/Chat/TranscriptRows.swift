@@ -25,9 +25,11 @@ struct ReasoningRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("chat.thought.toggle")
 
             if isExpanded {
                 Text(text)
+                    .accessibilityIdentifier("chat.thought.text")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)

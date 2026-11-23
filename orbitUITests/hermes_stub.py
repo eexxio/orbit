@@ -14,7 +14,9 @@ GATES = defaultdict(threading.Event)
 STATS_LOCK = threading.Lock()
 STATS = defaultdict(lambda: {"connections": 0, "prompts": 0})
 PARTIAL = "Here is the first part"
+LONG_REPLY = "\n\n".join(f"Paragraph {i}: A finished conversation has enough detail to fill several screens." for i in range(28))
 SCENARIOS = {
+    "Long finished chat": "long",
     "Complete the reply": "complete",
     "Close the connection": "disconnect",
     "Fail the reply": "failure",
@@ -142,6 +144,13 @@ class HermesStub(BaseHTTPRequestHandler):
             return True
         scenario = SCENARIOS[text]
         self.scenario = scenario
+        if scenario == "long":
+            if self.wait(fixture_id, scenario, "delta"):
+                self.event("reasoning.delta", {"text": "I checked the older details carefully.\nThis thought should stay in view when expanded.\nThe conversation continues below."})
+                self.event("message.delta", {"text": LONG_REPLY})
+                if self.wait(fixture_id, scenario, "end"):
+                    self.event("message.complete", {"text": LONG_REPLY})
+            return True
         if scenario == "next":
             if self.wait(fixture_id, scenario, "delta"):
                 self.event("message.delta", {"text": "The next reply"})

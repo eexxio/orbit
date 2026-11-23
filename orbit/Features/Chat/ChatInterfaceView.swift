@@ -19,6 +19,8 @@ struct ChatInterfaceView: View {
     @State private var scrollPosition = ScrollPosition()
     @State private var draft = ""
     @State private var stopCount = 0
+    @State private var selectedTool: ChatMessage?
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @FocusState private var composerIsFocused: Bool
 
@@ -38,11 +40,46 @@ struct ChatInterfaceView: View {
                 composer
             }
         }
+        .navigationTitle(chatTitle)
+        .sheet(isPresented: toolPresentation(inspector: false)) {
+            toolDetails(wide: false)
+        }
+        .inspector(isPresented: toolPresentation(inspector: true)) {
+            toolDetails(wide: true)
+                .inspectorColumnWidth(min: 360, ideal: 440, max: 560)
+        }
+        .onChange(of: sessionKey) { selectedTool = nil }
+        .sensoryFeedback(.selection, trigger: selectedTool?.id) { _, selection in selection != nil }
         .task { await chat.loadHistory() }
         .task { await focusComposerForNewChat() }
         .onAppear { chat.isOnScreen = true }
         // Only lets the chat go if no turn is running; otherwise it finishes in the background.
         .onDisappear { chat.isOnScreen = false }
+    }
+
+    private var chatTitle: String {
+        HermesClient.shared.sessions.first { $0.id == chat.key }?.title ?? "New chat"
+    }
+
+    private var usesToolInspector: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular
+    }
+
+    private func toolPresentation(inspector: Bool) -> Binding<Bool> {
+        Binding {
+            selectedTool != nil && usesToolInspector == inspector
+        } set: { shown in
+            if !shown && usesToolInspector == inspector { selectedTool = nil }
+        }
+    }
+
+    @ViewBuilder private func toolDetails(wide: Bool) -> some View {
+        if let selectedTool {
+            ToolCallDetailsView(chat: chat, message: selectedTool, wide: wide) {
+                self.selectedTool = nil
+            }
+            .id(selectedTool.id)
+        }
     }
 
     // MARK: - Loading State
@@ -183,7 +220,10 @@ struct ChatInterfaceView: View {
         if message.role == "reasoning" {
             ReasoningRow(text: message.text, isLive: message.id == chat.reasoningID)
         } else if let tool = message.tool {
-            ToolCallRow(tool: tool, isLive: chat.liveToolIDs.contains(message.id))
+            ToolCallRow(tool: tool, isLive: chat.liveToolIDs.contains(message.id)) {
+                composerIsFocused = false
+                selectedTool = message
+            }
         } else if message.isUser {
             HStack {
                 Spacer(minLength: 48)

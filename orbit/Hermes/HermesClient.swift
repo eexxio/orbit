@@ -365,13 +365,23 @@ final class HermesClient {
     }
 
     /// Stored rows to transcript items. An assistant row expands to its reasoning, its text and
-    /// its tool calls, in that order; `tool` result rows are dropped, since the call shows already.
+    /// its tool calls, in that order; result rows fill in the matching call without adding a row.
     static func transcript(from rows: [JSON]) -> [HermesMessage] {
         var items: [HermesMessage] = []
+        var pendingCalls: [String: Int] = [:]
         func isBlank(_ s: String) -> Bool { s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        func timestamp(_ row: JSON) -> Date? {
+            row["timestamp"].double.flatMap { $0.isFinite ? Date(timeIntervalSince1970: $0) : nil }
+        }
         for row in rows {
             let role = row["role"].text ?? ""
+            if role == "tool", let id = row["tool_call_id"].text, let index = pendingCalls.removeValue(forKey: id) {
+                items[index].tool?.complete(result: row["content"])
+                items[index].tool?.finishedAt = timestamp(row)
+                continue
+            }
             guard role == "user" || role == "assistant" else { continue }
+            if role == "user" { pendingCalls.removeAll() }
             if role == "assistant" {
                 let reasoning = row["reasoning"].text ?? row["reasoning_content"].text ?? ""
                 if !isBlank(reasoning) { items.append(HermesMessage(role: "reasoning", text: reasoning)) }
@@ -379,7 +389,9 @@ final class HermesClient {
             let text = text(of: row["content"])
             if !isBlank(text) { items.append(HermesMessage(role: role, text: text)) }
             for call in row["tool_calls"].list ?? [] {
-                guard let tool = HermesToolCall(stored: call) else { continue }
+                guard var tool = HermesToolCall(stored: call) else { continue }
+                tool.calledAt = timestamp(row)
+                if !tool.id.isEmpty { pendingCalls[tool.id] = items.count }
                 items.append(HermesMessage(role: "tool", text: "", tool: tool))
             }
         }
